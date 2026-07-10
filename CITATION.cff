@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "TIPS ICE Planner"
+abstract: >-
+  Pre-procedural planning software for transjugular intrahepatic portosystemic
+  shunt (TIPS). From a contrast-enhanced CT it predicts the side-firing
+  intracardiac echocardiography (ICE) view that an AcuNav-type transducer would
+  produce inside the inferior vena cava, and overlays the Entry-to-Target needle
+  trajectory on the axial, coronal, sagittal and synthetic ICE planes.
+  Research and education only; not a medical device and not intra-procedural
+  navigation.
+type: software
+authors:
+  - family-names: Yamamoto
+    given-names: Masayoshi
+    affiliation: "Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
+    email: yamamoto.masayoshi.jx@teikyo-u.ac.jp
+version: "0.4.46"
+license: GPL-3.0-or-later
+repository-code: "https://github.com/breguetjp-gif/tips-ice-planner"
+keywords:
+  - TIPS
+  - intracardiac echocardiography
+  - interventional radiology
+  - portal hypertension
+  - image-guided intervention
+  - pre-procedural planning

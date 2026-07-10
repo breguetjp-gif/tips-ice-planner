@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TIPS ICE Planner — User Manual</title>
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+    @bottom-center {
+      content: "TIPS ICE Planner — User Manual  ·  " counter(page) " / " counter(pages);
+      font-size: 8pt; color: #8a97a8; font-family: "Helvetica Neue", Arial, sans-serif;
+    }
+  }
+  html, body {
+    font-family: "Helvetica Neue", Arial, "Hiragino Sans", sans-serif;
+    color: #1b2430; font-size: 10.5pt; line-height: 1.62;
+  }
+  .cover {
+    height: 245mm; display: flex; flex-direction: column; justify-content: center;
+    background: #0e1c2c; color: #fff; margin: -18mm -16mm 0 -16mm; padding: 0 20mm;
+  }
+  .cover .tag {
+    color: #f08f69; font-weight: bold; letter-spacing: .12em; font-size: 11pt; margin-bottom: 6mm;
+  }
+  .cover h1 { font-size: 30pt; margin: 0 0 6mm 0; line-height: 1.3; }
+  .cover .sub { color: #b9c6d6; font-size: 12pt; line-height: 1.8; }
+  .cover .disclaimer {
+    margin-top: 14mm; padding: 5mm 6mm; border-left: 3px solid #d99a5b;
+    background: #1a2a3d; color: #e7c99a; font-size: 9.5pt; line-height: 1.7;
+  }
+  .cover .disclaimer b { color: #ffe6c9; }
+  .cover .author { margin-top: 10mm; color: #7d8ea3; font-size: 9.5pt; }
+
+  h1.section {
+    font-size: 16pt; color: #ffffff; background: #14253a; margin: 12mm 0 6mm 0;
+    padding: 4mm 6mm; break-after: avoid; border-left: 6px solid #F08F69;
+  }
+  h1.section:first-of-type { margin-top: 0; }
+  h2 {
+    font-size: 12.5pt; color: #b8542f; margin: 8mm 0 3mm 0;
+    border-bottom: 1.4pt solid #ecd3c4; padding-bottom: 1.5mm;
+  }
+  p { margin: 2.6mm 0; }
+  ul, ol { margin: 2.2mm 0 4mm 0; padding-left: 5.5mm; }
+  li { margin: 1.3mm 0; }
+  b { color: #0e1c2c; }
+  .fig {
+    margin: 4mm 0 6mm 0; text-align: center; page-break-inside: avoid;
+  }
+  .fig img {
+    width: 100%; border: 1pt solid #c7d2de; border-radius: 2mm;
+  }
+  .fig .cap {
+    font-size: 9pt; color: #6b7a8c; margin-top: 1.6mm;
+  }
+  .note {
+    background: #fbf3e8; border-left: 3px solid #d99a5b; padding: 3mm 4mm;
+    margin: 3mm 0; font-size: 9.8pt; color: #6b4a24; break-inside: avoid;
+  }
+  .kbd {
+    display: inline-block; padding: .3mm 1.6mm; border: 1pt solid #b9c6d6;
+    border-radius: 1.2mm; background: #eef2f6; font-size: 9pt; color: #33506e;
+  }
+  table.keys { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm 0; font-size: 9.7pt; break-inside: avoid; }
+  table.keys th { background: #14253a; color: #fff; text-align: left; padding: 2mm 3mm; }
+  table.keys td { padding: 2mm 3mm; border-bottom: .5pt solid #dde5ec; vertical-align: top; }
+  table.keys tr:nth-child(even) td { background: #f5f8fb; }
+  .footer-disc {
+    margin-top: 10mm; padding: 4mm 5mm; background: #fbf3e8; border-left: 3px solid #d99a5b;
+    color: #6b4a24; font-size: 9.5pt;
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="tag">RESEARCH &amp; EDUCATION TOOL &nbsp;/&nbsp; NOT A MEDICAL DEVICE</div>
+  <h1>TIPS ICE Planner<br>User Manual</h1>
+  <div class="sub">
+    A pre-procedure TIPS planning tool that, from a contrast-enhanced CT, helps you<br>
+    rehearse where along the hepatic vein &mdash; and in what direction &mdash; a puncture<br>
+    would reach the portal vein.
+  </div>
+  <div class="disclaimer">
+    This app is a <b>research, education and self-training tool</b>. It is <b>not a certified
+    medical device</b> and is <b>not</b> intra-procedural navigation (it works from the
+    pre-procedure CT, and the liver and vessels move with respiration and the needle itself
+    during the real procedure, so the on-screen geometry will not match exactly).
+    All numbers and paths shown are <b>descriptive reference information only</b> &mdash; they do not
+    imply fewer punctures, reduced radiation, or that any particular needle or path is safer.
+    <b>The operator makes all final clinical decisions.</b>
+  </div>
+  <div class="author">Author: M. Yamamoto (IR physician, Japan)</div>
+</div>
+
+<h1 class="section">1. Open a patient</h1>
+<p>
+  On launch you see a list of studies. Import a DICOM folder (e.g. from a CD-R) with
+  <b>&ldquo;Import DICOM folder&hellip;&rdquo;</b> and it stays in this list for next time.
+</p>
+<div class="fig">
+  <img src="screenshots/en_fig1_database.png">
+  <div class="cap">Figure 1 &mdash; Patient list. Select a row and click Open (or double-click a thumbnail).
+    The Comment column has been blacked out for this manual</div>
+</div>
+<ul>
+  <li><b>Search</b>: filter studies by patient name, ID, <b>institution</b>, description or comment.</li>
+  <li><b>Institution column</b>: shows the DICOM institution name for each study.</li>
+  <li><b>Anonymize</b>: temporarily hides name / ID / age for screen sharing or teaching
+      (the underlying data is unchanged).</li>
+  <li><b>Comment</b>: click the cell once to edit it in place &mdash; handy for teaching notes or
+      a quick summary of the case.</li>
+  <li><b>Restore column</b>: recalls a saved working state (slot 1, 2 or 3) directly from that
+      patient's row &mdash; it always targets that patient regardless of which row is selected.
+      Empty slots are shown dimmed and can't be clicked. See &ldquo;6. Save, restore and undo&rdquo; below.</li>
+  <li><b>Remove study</b>: removes it from the list only &mdash; the DICOM files on disk are kept.</li>
+</ul>
+<div class="note">
+  The CT you open here becomes the working volume for Step 1 and Step 2 below. You can
+  always re-open the same patient later from this list.
+</div>
+
+<h1 class="section">2. Step 1 &mdash; ICE setup</h1>
+<p>
+  The &ldquo;1. ICE setup&rdquo; tab builds the geometry of a virtual side-firing ICE probe
+  sitting inside the IVC (inferior vena cava): which direction it points, and what
+  cross-section it would show. All the controls live in a single strip at the bottom of the window.
+</p>
+<ol>
+  <li>On the <b>Axial pane</b>, click <b>&ge;2 points along the IVC</b>. The points you click,
+      joined together, become the probe's path through the IVC (you can drag any point
+      afterward to fine-tune it).</li>
+  <li>Choose <b>Insertion</b> (Femoral / Jugular) from the menu bar under
+      <b>&ldquo;Settings&rdquo; &rarr; &ldquo;Default insertion route&rdquo;</b>. Since this is
+      usually fixed per institution rather than changed case-by-case, it has been moved out of the
+      per-case controls and into Settings.</li>
+  <li>Aim the fan with the bottom control strip (below).</li>
+</ol>
+<div class="fig">
+  <img src="screenshots/en_fig2_overview.png">
+  <div class="cap">Figure 2 &mdash; Overall layout. Four panes (Axial / Coronal / Sagittal / ICE view) plus
+    the 3D linkage panel on the right, with the control strip along the bottom</div>
+</div>
+<p>
+  The bottom strip offers two control styles: the default <b>Handle</b> mode, where you drag a
+  picture of the probe handle, and a <b>Classic</b> mode with numeric sliders (switch between them
+  under &ldquo;Settings &rarr; Control style&rdquo;).
+</p>
+<table class="keys">
+  <tr><th>Control (Handle mode)</th><th>What it does</th></tr>
+  <tr><td><b>Drag the body up/down</b></td><td>Rotate &theta; (spins the ICE fan around the IVC axis &mdash; matches turning the real catheter)</td></tr>
+  <tr><td><b>Drag the body left/right</b></td><td>Push/Pull (slides the probe along the IVC path toward the foot/head)</td></tr>
+  <tr><td><b>Drag the two thumbwheels up/down</b></td><td>Deflect A-P &middot; L-R (simulates deflecting the tip anterior/posterior and left/right)</td></tr>
+</table>
+<table class="keys">
+  <tr><th>Other controls</th><th>What it does</th></tr>
+  <tr><td><b>Roll / Roll 0</b></td><td>Freely rotates the ICE image itself for a more convenient view (does not change the underlying geometry) / resets it to 0&deg;</td></tr>
+  <tr><td><b>Flip ICE L/R</b></td><td>Mirrors the ICE image left&ndash;right</td></tr>
+  <tr><td><b>Liver / Liver: Haze &middot; Surface / Opacity</b></td><td>Overlays a translucent liver &ldquo;ghost&rdquo; to help judge position; toggle haze/surface style and adjust opacity</td></tr>
+</table>
+<div class="note">
+  The ICE view is rendered as <b>plain CT</b> (no ultrasound speckle or texture is simulated).
+  It exists to quickly show &ldquo;which direction, and where, am I looking right now.&rdquo;
+  Overlaying the liver ghost makes it easy to see roughly where in the liver the fan and probe
+  are pointing. The real procedure will not match this angle-for-angle, but it helps build a
+  mental picture beforehand.
+</div>
+
+<h1 class="section">3. Step 2 &mdash; Puncture planning</h1>
+<p>
+  The &ldquo;2. Needle&rdquo; tab lets you set Entry (the hepatic-vein puncture point) and
+  Target (the portal-vein aim point), and review the straight-line path between them. Use the
+  &ldquo;Set:&rdquo; row at the bottom to choose which one you're placing.
+</p>
+<ol>
+  <li>With <b>1&middot;Entry (puncture)</b> selected, click on any pane.</li>
+  <li>With <b>2&middot;Target (portal)</b> selected, click the portal-vein position you're aiming for.</li>
+</ol>
+<p>
+  The straight Entry&rarr;Target path is drawn on all four panes and in 3D. A dedicated text
+  readout under the ICE view shows the straight-line distance and color-coded status:
+</p>
+<div class="fig">
+  <img src="screenshots/en_fig3_entry_target.png">
+  <div class="cap">Figure 3 &mdash; Entry and Target set. The readout under the ICE view shows the
+    straight-line distance and whether both points lie in the current plane</div>
+</div>
+<ul>
+  <li><span style="color:#c9971f"><b>Yellow</b></span>: the straight-line Entry&rarr;Target distance.</li>
+  <li><span style="color:#3f9a5c"><b>Green</b></span> / <span style="color:#b8542f"><b>Orange</b></span>:
+      whether Entry and Target both lie in the current ICE plane. If not, it shows the off-plane
+      distance (mm) and how many degrees to rotate &theta; to bring the whole path into view.</li>
+</ul>
+<div class="note">
+  Curved-needle models (RUPS / Colapinto) and the &ldquo;Plot&rdquo; rehearsal mode are
+  temporarily disabled pending redesign. The straight-line path is the current foundation,
+  with curved models planned to return in a future update.
+</div>
+
+<h1 class="section">4. Recording the actual needle position</h1>
+<p>
+  Turning on <b>&ldquo;Actual tip (click ICE)&rdquo;</b> makes a click on the ICE image record
+  &ldquo;where the needle tip is actually seen right now.&rdquo; Entry stays fixed; a translucent
+  needle shape connects it to the point you clicked (drag the tip afterward to fine-tune it).
+</p>
+<div class="fig">
+  <img src="screenshots/en_fig4_actual_needle.png">
+  <div class="cap">Figure 4 &mdash; Actual tip set. The readout under the ICE view shows the distance
+    from the actual tip to Target, broken down by left/right and cranial/caudal offset</div>
+</div>
+<div class="note">
+  <b>About the emphasis.</b> The actual-needle shape (Entry &rarr; tip) is drawn thicker and
+  darker, with a ring at the tip and a bold &ldquo;&#9668; on slice / on plane&rdquo; label,
+  <b>only when it truly lies in the CT slice or ICE plane you're currently viewing</b>. Rotate
+  &theta; or scroll to a different slice and, once the true position falls outside the view,
+  the needle fades and the label disappears. This is meant to answer, at a glance: &ldquo;is this
+  needle actually visible in what I'm looking at right now?&rdquo;
+</div>
+<p>
+  A short (&asymp;2&thinsp;cm) dotted extension is also drawn from the tip, animated flowing
+  forward. It represents the assumed continuation if a Colapinto-like curvature is applied.
+  The <b>Rotate left / Rotate right</b> buttons twist this assumed curvature to show which way
+  the tip would bend if you twisted the stiffening cannula by hand.
+</p>
+<div class="note">
+  All of this is <b>descriptive reference information only</b> &mdash; not a recommended path,
+  not an optimization, and not a safety guarantee.
+</div>
+
+<h1 class="section">5. Transabdominal (surface) echo mode</h1>
+<p>
+  Switching <b>&ldquo;Echo: Intravascular ICE &harr; Transabdominal (surface)&rdquo;</b> at the
+  top simulates a convex probe placed on the skin. Click on the skin in any of
+  Axial / Coronal / Sagittal to snap the probe onto the body surface; drag to slide it along the skin.
+</p>
+<div class="fig">
+  <img src="screenshots/en_fig5_transabdominal.png">
+  <div class="cap">Figure 5 &mdash; Transabdominal mode. The probe and fan ghost are projected onto all three
+    cross-sections; the 3D panel shows the outer body-surface shell</div>
+</div>
+<p>
+  In this mode the &theta;/deflection labels change to &ldquo;Rotate / Tilt (in-plane) / Rock
+  (out-of-plane)&rdquo;, and probe Push/Pull is hidden. This is a <b>static CT preview</b>,
+  not live ultrasound.
+</p>
+
+<h1 class="section">6. Save, restore and undo</h1>
+<p>
+  The bottom control strip also has controls for saving, restoring, and undoing your work.
+</p>
+<table class="keys">
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><b>Save state (1 / 2 / 3)</b></td><td>Saves the current working state (IVC path,
+      Entry/Target, actual tip, view settings, etc.) into one of three slots dedicated to this
+      patient. Up to three states can be kept per patient.</td></tr>
+  <tr><td><b>Restore</b></td><td>To bring a saved state back, use the <b>Restore button (1, 2 or 3)
+      on that patient's row in the patient list</b> &mdash; not from within the viewer itself.</td></tr>
+  <tr><td><b>Undo</b></td><td>Steps back one action &mdash; the last click/point placement, or a
+      Clear / zero-deflect / Roll-0 / insertion-route change (mid-drag states are not covered).</td></tr>
+  <tr><td><b>Clear</b></td><td>Removes just the IVC path, the needle (Entry/Target/actual tip),
+      plots, or everything &mdash; individually.</td></tr>
+</table>
+<div class="note">
+  Closing the app asks whether to save the current patient's working state. Choosing &ldquo;Yes&rdquo;
+  saves it to the first empty slot automatically and pops up which slot number it used.
+</div>
+
+<h1 class="section">7. Menu bar, the 3D linkage panel, and common gestures</h1>
+<p>The top menu bar is organized as follows.</p>
+<table class="keys">
+  <tr><th>Menu</th><th>Key items</th></tr>
+  <tr><td><b>File</b></td><td>Patient list / Open DICOM</td></tr>
+  <tr><td><b>Edit</b></td><td>Undo / Clear IVC path / Clear needle / Clear plots / Clear all</td></tr>
+  <tr><td><b>Settings</b></td><td>Control style (Classic / Handle) / Default insertion route / Switch language (English &harr; Japanese)</td></tr>
+  <tr><td><b>Help</b></td><td>User manual (PDF) / Tip of the day / FAQ / About / Check for updates / Send feedback / Support development</td></tr>
+</table>
+<p>
+  The &ldquo;3D linkage&rdquo; panel on the right lets you inspect the ICE probe, fan, liver
+  and actual needle in three dimensions.
+</p>
+<table class="keys">
+  <tr><th>Action</th><th>Effect</th></tr>
+  <tr><td>Drag</td><td>Rotate the viewpoint</td></tr>
+  <tr><td>Wheel / pinch</td><td>Zoom, centered on the cursor</td></tr>
+  <tr><td>Right-click</td><td>Reset zoom / viewpoint</td></tr>
+</table>
+<p>Every image pane (Axial / Coronal / Sagittal / ICE) shares the following controls.</p>
+<table class="keys">
+  <tr><th>Action</th><th>Effect</th></tr>
+  <tr><td>Pinch  /  <span class="kbd">&#8984;</span>+scroll</td><td>Zoom, centered on the cursor</td></tr>
+  <tr><td>Drag</td><td>Adjust window level / width (brightness &amp; contrast)</td></tr>
+  <tr><td>Right-drag / wheel</td><td>Zoom, centered on the cursor</td></tr>
+  <tr><td>Right-click</td><td>Reset zoom &amp; position</td></tr>
+  <tr><td><span class="kbd">&#8997; Option</span> / <span class="kbd">Space</span> + drag, or middle-drag</td><td>Pan the image</td></tr>
+</table>
+
+<div class="footer-disc">
+  <b>Disclaimer.</b> This app is a prototype for research, education and self-training only.
+  It is not a certified medical device, is not intended to diagnose or treat disease, and is
+  not intra-procedural navigation. All numbers, paths and emphasis shown are descriptive
+  reference information only; they do not imply that any particular needle, path or technique
+  is safe or recommended. Final clinical judgment always rests with the operator.
+</div>
+
+</body>
+</html>

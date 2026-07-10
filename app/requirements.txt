@@ -1,0 +1,8 @@
+# TIPS Planner standalone (Win/Mac) — runtime deps
+numpy>=1.26
+pydicom>=3.0
+python-gdcm>=3.0          # JPEG Lossless / JPEG2000 等の展開（DICOM圧縮）
+pylibjpeg>=2.0            # 予備デコーダ（GDCM が苦手な系列向け）
+pylibjpeg-libjpeg>=2.1    #   JPEG Lossless
+pylibjpeg-openjpeg>=2.0   #   JPEG2000 / HTJ2K
+PySide6>=6.6             # Qt GUI（LGPL）

@@ -1,0 +1,125 @@
+# TIPS ICE Planner
+
+Pre-procedural planning for **TIPS** (transjugular intrahepatic portosystemic shunt).
+
+From a contrast-enhanced CT, the software **predicts the side-firing ICE (intracardiac
+echocardiography) view** that an AcuNav-type transducer would produce from inside the inferior
+vena cava, and overlays the **Entry → Target needle trajectory** on four synchronised planes
+(axial, coronal, sagittal, and the synthetic ICE fan).
+
+> ⚠️ **Research, education and self-training only.**
+> **This is not a medical device. This is not intra-procedural navigation.**
+> It does not propose an optimal or recommended puncture route, and it makes no claim of reducing
+> the number of punctures, the radiation dose or the procedure time.
+> **All clinical decisions are made by the operator.**
+
+---
+
+## What it does
+
+The inferior vena cava is traced on the CT, which gives the catheter's centreline. The transducer
+is then modelled along that centreline: tip deflection about two orthogonal axes, a constant-curvature
+tip bend, and a 90° side-firing imaging sector. Resampling the CT volume with that geometry
+(oblique-MPR reslice followed by an ultrasound scan-conversion) yields the plane the ICE probe would
+actually see at a given rotation angle θ, deflection and pull-back position.
+
+The predicted view deliberately keeps **CT appearance** rather than synthesising speckle: the aim is a
+geometric rehearsal of *where the portal vein, hepatic vein and IVC will sit in the ICE image*, not a
+photorealistic ultrasound simulation.
+
+## Two front ends, one compute core
+
+| | |
+|---|---|
+| `app/` | **Standalone application** (macOS + Windows). Python 3.13 / PySide6 / pydicom. Own DICOM loader, own database, own viewer. No Miele dependency. |
+| `plugin/` | **Miele-LXIV plugin** (Objective-C). Runs inside the Miele-LXIV DICOM workstation. |
+| `plugin-send/` | **"Send to ICE Planner"** database plugin — hands the selected study from Miele-LXIV to the standalone app via the `tipsiceplanner://` URL scheme. |
+
+`app/tips_core/geometry.py` is the **single source of truth** for the geometry (oblique-MPR reslice,
+side-firing fan, two-axis deflection, tip bend, needle arc). The Objective-C plugin implements the
+same equations; the Python port is verified against it.
+
+## Running the standalone app
+
+### From a release build
+Download the build for your platform, unzip, and run it. No Python installation is needed.
+Quick-start notes in Japanese: [`docs/quickstart_ja_macOS.md`](docs/quickstart_ja_macOS.md) ·
+[`docs/quickstart_ja_Windows.md`](docs/quickstart_ja_Windows.md).
+
+### From source
+```bash
+python3.13 -m venv ~/.tips_planner/venv
+~/.tips_planner/venv/bin/pip install -r app/requirements.txt
+~/.tips_planner/venv/bin/python app/main.py
+```
+On macOS you can simply double-click `app/run.command`, which creates the virtual environment on
+first launch.
+
+> **Two hard requirements**, both confirmed by reproducible crashes:
+> 1. **Python 3.13.** PySide6 6.11 aborts on Python 3.14 (the Qt platform plugin fails to load).
+> 2. **The virtual environment must live at a path without spaces.** Qt cannot load its platform
+>    plugin through a space-containing path and aborts in `createPlatformIntegration`. The source
+>    tree itself may sit anywhere. `run.command` handles this by placing the venv at
+>    `~/.tips_planner/venv`.
+
+### Workflow
+1. **Database** — `Import DICOM folder…`, then double-click a series to open it.
+2. **Step 1 (ICE setup)** — click along the IVC on the axial pane to define the probe path, choose the
+   access route (femoral or jugular), then explore with θ / probe position / deflection.
+3. **Step 2 (Needle)** — place Entry and Target; the needle arc is drawn on all four panes.
+
+Full user manuals: [`app/docs/manual_en.pdf`](app/docs/manual_en.pdf) ·
+[`app/docs/manual_ja.pdf`](app/docs/manual_ja.pdf)
+
+## Building the Miele-LXIV plugin
+
+```bash
+bash plugin/build.sh          # compiles, ad-hoc signs, installs into the Miele-LXIV container
+bash plugin-send/build.sh
+```
+Set `SIGN_ID` to sign with your own identity; the default is ad-hoc, which is sufficient locally.
+Because the plugin links Miele-LXIV in-process, it is a derivative work and is distributed under the
+**GPL-3.0** (see *License*).
+
+## Tests
+
+```bash
+~/.tips_planner/venv/bin/python -m pytest app/tests -q
+```
+
+## Example data
+
+The software reads any contrast-enhanced abdominal CT series in DICOM. The figures in the
+accompanying paper and manual are produced from the public **HCC-TACE-Seg** collection of
+The Cancer Imaging Archive, which is released under **CC BY 4.0** and requires no registration:
+
+> Moawad AW, Fuentes D, Morshid A, et al. *Multimodality annotated HCC cases with and without
+> advanced imaging segmentation* [Data set]. The Cancer Imaging Archive; 2021.
+> doi:[10.7937/TCIA.5FNA-0924](https://doi.org/10.7937/TCIA.5FNA-0924)
+
+A portal-venous-phase series is required, because the portal vein, hepatic veins and IVC must all be
+opacified.
+
+## Data and privacy
+
+Patient DICOM never leaves the machine. Imported studies, thumbnails and comments are stored in the
+operating system's per-user application-data folder. **No patient data of any kind is contained in,
+or committed to, this repository** — a clone contains code only.
+
+## Citation
+
+If this software supports your work, please cite the software paper (in preparation) and the release
+you used. Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
+
+## License
+
+**GNU General Public License v3.0 or later** — see [`LICENSE`](LICENSE) (identical text is provided as
+`Licence.txt`). The standalone application uses PySide6 under the LGPL; NumPy, pydicom and GDCM are
+permissive. The Miele-LXIV plugin links a GPL-3.0 host in-process and is therefore itself GPL-3.0.
+
+## Support
+
+Please open an issue on the GitHub repository.
+
+---
+*M. Yamamoto — interventional radiologist, Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan.*

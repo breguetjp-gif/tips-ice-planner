@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>TIPS ICE Planner 使い方説明書</title>
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+    @bottom-center {
+      content: "TIPS ICE Planner 使い方説明書  ·  " counter(page) " / " counter(pages);
+      font-size: 8pt; color: #8a97a8; font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    }
+  }
+  html, body {
+    font-family: "Hiragino Sans", "Yu Gothic", "Helvetica Neue", Arial, sans-serif;
+    color: #1b2430; font-size: 10.5pt; line-height: 1.62;
+  }
+  .cover {
+    height: 245mm; display: flex; flex-direction: column; justify-content: center;
+    background: #0e1c2c; color: #fff; margin: -18mm -16mm 0 -16mm; padding: 0 20mm;
+  }
+  .cover .tag {
+    color: #f08f69; font-weight: bold; letter-spacing: .12em; font-size: 11pt; margin-bottom: 6mm;
+  }
+  .cover h1 { font-size: 30pt; margin: 0 0 6mm 0; line-height: 1.3; }
+  .cover .sub { color: #b9c6d6; font-size: 12pt; line-height: 1.8; }
+  .cover .disclaimer {
+    margin-top: 14mm; padding: 5mm 6mm; border-left: 3px solid #d99a5b;
+    background: #1a2a3d; color: #e7c99a; font-size: 9.5pt; line-height: 1.7;
+  }
+  .cover .disclaimer b { color: #ffe6c9; }
+  .cover .author { margin-top: 10mm; color: #7d8ea3; font-size: 9.5pt; }
+
+  h1.section {
+    font-size: 16pt; color: #ffffff; background: #14253a; margin: 12mm 0 6mm 0;
+    padding: 4mm 6mm; break-after: avoid; border-left: 6px solid #F08F69;
+  }
+  h1.section:first-of-type { margin-top: 0; }
+  h2 {
+    font-size: 12.5pt; color: #b8542f; margin: 8mm 0 3mm 0;
+    border-bottom: 1.4pt solid #ecd3c4; padding-bottom: 1.5mm;
+  }
+  p { margin: 2.6mm 0; }
+  ul, ol { margin: 2.2mm 0 4mm 0; padding-left: 5.5mm; }
+  li { margin: 1.3mm 0; }
+  b { color: #0e1c2c; }
+  .fig {
+    margin: 4mm 0 6mm 0; text-align: center; page-break-inside: avoid;
+  }
+  .fig img {
+    width: 100%; border: 1pt solid #c7d2de; border-radius: 2mm;
+  }
+  .fig .cap {
+    font-size: 9pt; color: #6b7a8c; margin-top: 1.6mm;
+  }
+  .note {
+    background: #fbf3e8; border-left: 3px solid #d99a5b; padding: 3mm 4mm;
+    margin: 3mm 0; font-size: 9.8pt; color: #6b4a24; break-inside: avoid;
+  }
+  .kbd {
+    display: inline-block; padding: .3mm 1.6mm; border: 1pt solid #b9c6d6;
+    border-radius: 1.2mm; background: #eef2f6; font-size: 9pt; color: #33506e;
+  }
+  table.keys { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm 0; font-size: 9.7pt; break-inside: avoid; }
+  table.keys th { background: #14253a; color: #fff; text-align: left; padding: 2mm 3mm; }
+  table.keys td { padding: 2mm 3mm; border-bottom: .5pt solid #dde5ec; vertical-align: top; }
+  table.keys tr:nth-child(even) td { background: #f5f8fb; }
+  .footer-disc {
+    margin-top: 10mm; padding: 4mm 5mm; background: #fbf3e8; border-left: 3px solid #d99a5b;
+    color: #6b4a24; font-size: 9.5pt;
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="tag">RESEARCH &amp; EDUCATION TOOL &nbsp;/&nbsp; NOT A MEDICAL DEVICE</div>
+  <h1>TIPS ICE Planner<br>使い方説明書</h1>
+  <div class="sub">
+    造影CTから、術前に「肝静脈のどこから・どの向き・どの針で穿刺すれば<br>
+    門脈に届くか」を検討するための、TIPS術前プランニング・ツールです。
+  </div>
+  <div class="disclaimer">
+    本アプリは<b>研究・教育・自己研鑽用のツール</b>であり、<b>認証された医療機器ではありません</b>。
+    <b>術中ナビゲーションでもありません</b>（術前CTのままなので、実際の手技中は肝臓・血管が呼吸や
+    穿刺針で動くため、この通りにはなりません）。画面が示す数値・経路は<b>記述的な参考情報</b>であり、
+    穿刺回数の削減や特定の針・経路が安全であることを意味しません。<b>最終的な判断は常に術者が行います。</b>
+  </div>
+  <div class="author">作成: M. Yamamoto（日本のIVR専門医）</div>
+</div>
+
+<h1 class="section">1. 患者を選んで開く</h1>
+<p>
+  起動すると、まず検査（患者）の一覧画面が表示されます。CD-R等から取り込んだDICOMのフォルダを
+  <b>「DICOMフォルダを取り込み…」</b>で読み込んでおけば、次回からはここに一覧として残ります。
+</p>
+<div class="fig">
+  <img src="screenshots/ja_fig1_database.png">
+  <div class="cap">図1　患者リスト画面。行を選んで「開く」（またはサムネイルをダブルクリック）。Comment欄は本書用に黒塗りしています</div>
+</div>
+<ul>
+  <li><b>検索</b>：患者名・ID・<b>施設名</b>・説明・コメントで検査を絞り込みます。</li>
+  <li><b>Institution（施設）列</b>：DICOMの施設名を一覧に表示します。</li>
+  <li><b>匿名化</b>：画面共有や教育の場で、氏名・ID・年齢を一時的に隠します（元データは変わりません）。</li>
+  <li><b>Comment（コメント）</b>：セルを1回クリックするとその場で入力・編集できます。教育用メモや症例の要点を残せます。</li>
+  <li><b>Restore（復元）列</b>：患者ごとに保存した作業状態（1・2・3）を、この行から直接呼び戻せます
+      （どの行を選択しているかに関係なく、その患者自身の保存分だけが対象です）。保存が無いスロットは
+      薄く表示され押せません。詳しくは「6. 状態の保存・復元・元に戻す」を参照してください。</li>
+  <li><b>検査を削除</b>：一覧から消すだけで、ディスク上のDICOMファイル自体は残ります。</li>
+</ul>
+<div class="note">
+  ここで開いたCTは、この後の「Step 1」「Step 2」の作業台になります。同じ患者を後日また開くと、
+  一覧からいつでも呼び出せます。
+</div>
+
+<h1 class="section">2. Step 1 — ICE のセットアップ</h1>
+<p>
+  「1. ICE setup」タブでは、IVC（下大静脈）内に置いた仮想の側射ICEプローブから、
+  どの向きにどんな断面が見えるかを組み立てます。画面下部には、操作系をまとめた1本の帯があります。
+</p>
+<ol>
+  <li><b>Axial画面</b>で、IVCに沿って<b>2点以上クリック</b>します。クリックした点を結ぶ線が
+      ICEプローブの通り道（IVCパス）になります（後から点をドラッグして微調整できます）。</li>
+  <li><b>挿入方向</b>（大腿／頸静脈）は、メニューバーの<b>「Settings（設定）」▸「Default insertion route（既定の挿入方向）」</b>
+      で選びます。施設ごとに固定して使うことが多い設定のため、症例ごとの画面からは外し、設定メニューに集約しています。</li>
+  <li>下部の操作帯で、扇の向きを合わせます（下記参照）。</li>
+</ol>
+<div class="fig">
+  <img src="screenshots/ja_fig2_overview.png">
+  <div class="cap">図2　画面全体のレイアウト。4画面（Axial／Coronal／Sagittal／ICE像）＋右の3D連動パネル、
+    下部に操作帯がまとまっている</div>
+</div>
+<p>
+  下部の操作帯には、絵をドラッグしてICEを操作する<b>ハンドル操作</b>（既定）と、
+  数値スライダーで操作する<b>Classic</b>モードがあります（切替は「Settings ▸ Control style」）。
+</p>
+<table class="keys">
+  <tr><th>操作（ハンドル操作モード）</th><th>できること</th></tr>
+  <tr><td><b>本体を上下にドラッグ</b></td><td>回転 θ（IVCの軸まわりにICEの扇を回す。実機のカテーテル操作に相当）</td></tr>
+  <tr><td><b>本体を左右にドラッグ</b></td><td>Push/Pull（IVCパスに沿ってプローブ位置を足側/頭側へ動かす）</td></tr>
+  <tr><td><b>2つのサムホイールを上下にドラッグ</b></td><td>偏向 A-P・L-R（先端の前後・左右方向への偏向を模擬）</td></tr>
+</table>
+<table class="keys">
+  <tr><th>その他の操作</th><th>できること</th></tr>
+  <tr><td><b>ロール／ロール0</b></td><td>ICE画像そのものを任意角度で回して見やすく表示（幾何には影響しません）／0度に戻す</td></tr>
+  <tr><td><b>ICE左右反転</b></td><td>ICE画像を左右反転して表示</td></tr>
+  <tr><td><b>肝臓 ／ 肝臓: もや・表面 ／ 不透明度</b></td><td>肝臓の輪郭を半透明の「ゴースト」として重ねて位置関係を把握。もや/表面表示の切替と不透明度調整</td></tr>
+</table>
+<div class="note">
+  ICE像は基本的に<b>CTの見え方そのまま</b>で表示しています（超音波特有のスペックル等は再現していません）。
+  「今どの向き・どこを見ているか」を素早く把握するための表示です。肝臓ゴーストを重ねると、扇やICEプローブが
+  肝臓のどのあたりを通っているかが一目で把握できます。実際の手技でここまで正確に角度が分かるわけではありませんが、
+  術前のイメージ作りに役立ちます。
+</div>
+
+<h1 class="section">3. Step 2 — 穿刺のプランニング</h1>
+<p>
+  「2. Needle」タブでは、Entry（肝静脈側の刺入点）と Target（門脈側の狙い）を指定し、
+  直線の穿刺経路を検討します。下部の「Set:」欄で対象を切り替えます。
+</p>
+<ol>
+  <li><b>1・Entry（刺入点）</b>を選んだ状態で、いずれかの断面をクリック。</li>
+  <li><b>2・Target（門脈側）</b>を選んだ状態で、狙いたい門脈の位置をクリック。</li>
+</ol>
+<p>
+  Entry→Target の直線経路は4画面と3Dパネルに表示され、ICE画像の下の専用テキスト欄に
+  直線距離と、位置関係に関する情報が色分けで表示されます。
+</p>
+<div class="fig">
+  <img src="screenshots/ja_fig3_entry_target.png">
+  <div class="cap">図3　Entry・Targetを設定した状態。ICE画像下に「Entry → Target 直線距離」と、
+    両点が今の断面に乗っているかどうかが表示される</div>
+</div>
+<ul>
+  <li><span style="color:#c9971f"><b>黄</b></span>：Entry→Target の直線距離。</li>
+  <li><span style="color:#3f9a5c"><b>緑</b></span>／<span style="color:#b8542f"><b>橙</b></span>：
+      Entry と Target が今のICE断面にほぼ同時に乗っているかどうか。乗っていなければ、
+      面外距離（mm）と「θを何度回せば同一断面に近づくか」を表示します。</li>
+</ul>
+<div class="note">
+  現時点では、曲がる針（RUPS／Colapinto）のモデルと「Plot 予習」モードは、再設計のため一時的に
+  封印しています。まずは直線の位置関係を土台に、今後アップデートで戻す予定です。
+</div>
+
+<h1 class="section">4. 実際の針の位置を記録する</h1>
+<p>
+  「Actual tip（click ICE）」ボタンをONにすると、ICE画像上でクリックした点が
+  「今、実際に見えている針先」として記録されます。Entry（刺入点）は固定のまま、
+  クリックした点まで半透明の針の形で結ばれます（先端はドラッグで微調整可能）。
+</p>
+<div class="fig">
+  <img src="screenshots/ja_fig4_actual_needle.png">
+  <div class="cap">図4　実際の針先を設定した状態。ICE画像下に「実際の針先 → Target」の距離（左右・頭尾側の内訳つき）が表示される</div>
+</div>
+<div class="note">
+  <b>強調表示について。</b>実際の針（Entry→針先の形）は、<b>今見ている断面・ICE平面に
+  本当に乗っているときだけ</b>、太く濃く・先端にリング付き・「◀ on slice / on plane」の文字で
+  強調表示されます。断面をずらしたりθを回したりして、実際の位置から離れると、針は薄く細く
+  なりラベルも消えます。「今見ている画像に、本当にこの針が写っているのか」を一目で見分けるための表示です。
+</div>
+<p>
+  さらに、針先から2cm分の点線（先端から手前に流れるアニメーション）が表示されます。これは
+  「スタイフニングカニューラを手元でひねった場合、この向きに曲がっていく」という想定を示す
+  補助線です。<b>回旋（左/右）</b>ボタンで、その曲がる向きを変えて確認できます。
+</p>
+<div class="note">
+  これらはすべて<b>記述的な参考表示</b>であり、経路の推奨・最適化・安全性の保証ではありません。
+</div>
+
+<h1 class="section">5. 経腹（体表）エコー・モード</h1>
+<p>
+  上部の「Echo: Intravascular ICE ⇄ Transabdominal (surface)」で切り替えると、体表に当てたコンベックス
+  プローブを模擬した表示になります。Axial／Coronal／Sagittal のどこでも、皮膚をクリックすると
+  プローブが吸着して設置され、ドラッグで皮膚上を移動できます。
+</p>
+<div class="fig">
+  <img src="screenshots/ja_fig5_transabdominal.png">
+  <div class="cap">図5　経腹モード。3断面それぞれにプローブと扇のゴーストが投影され、3DパネルはCT外皮の輪郭が表示される</div>
+</div>
+<p>
+  経腹モードでは、θ/偏向のラベルが「回転／傾き（面内）／あおり（面外）」に読み替わり、
+  プローブの押し引き（Push/Pull）は使いません。これは<b>静止画のCTプレビュー</b>であり、
+  リアルタイムの超音波ではありません。
+</p>
+
+<h1 class="section">6. 状態の保存・復元・元に戻す</h1>
+<p>
+  下部の操作帯には、作業状態の保存・復元・取り消しのための操作もまとまっています。
+</p>
+<table class="keys">
+  <tr><th>操作</th><th>できること</th></tr>
+  <tr><td><b>状態保存（1・2・3）</b></td><td>IVCパス・Entry/Target・実際の針先・表示設定などの作業状態を、
+      その患者専用のスロット1〜3のいずれかへ保存します。同じ患者について最大3つまで残せます。</td></tr>
+  <tr><td><b>復元</b></td><td>保存した作業状態を呼び戻すには、<b>患者リスト画面のその患者の行にある
+      「Restore」列のボタン（1・2・3）</b>を押します。アプリの画面上部からではなく、必ず患者リスト側から行います。</td></tr>
+  <tr><td><b>元に戻す（Undo）</b></td><td>直前のクリック・点の設定や、クリア／偏向ゼロ／ロール0／挿入方向の変更を
+      1つだけ元に戻します（連続ドラッグの途中経過は対象外）。</td></tr>
+  <tr><td><b>クリア</b></td><td>IVCパス・針（Entry/Target/実際の針先）・プロット・すべて、を個別に消去できます。</td></tr>
+</table>
+<div class="note">
+  アプリを閉じるときは、開いている患者の作業状態を保存するかどうか確認するダイアログが出ます。
+  「はい」を選ぶと、空いているスロットへ自動で保存され、保存先のスロット番号がポップアップで表示されます。
+</div>
+
+<h1 class="section">7. メニューバー・3D連動パネル・共通操作</h1>
+<p>上部メニューバーは次のようにまとまっています。</p>
+<table class="keys">
+  <tr><th>メニュー</th><th>主な項目</th></tr>
+  <tr><td><b>File</b></td><td>患者リスト／DICOMを開く</td></tr>
+  <tr><td><b>Edit</b></td><td>元に戻す／IVCパスを消去／針を消去／プロットを消去／すべて消去</td></tr>
+  <tr><td><b>Settings</b></td><td>操作スタイル（Classic／Handle）／既定の挿入方向／表示言語の切替（英語⇄日本語）</td></tr>
+  <tr><td><b>Help</b></td><td>使い方説明書（PDF）／今日のヒント／FAQ／このアプリについて／アップデート確認／
+      フィードバック送信／開発を支援</td></tr>
+</table>
+<p>
+  画面右の「3D連動」パネルは、ICEプローブ・扇・肝臓・実際の針を立体的に確認できる場所です。
+</p>
+<table class="keys">
+  <tr><th>操作</th><th>できること</th></tr>
+  <tr><td>ドラッグ</td><td>視点を回転</td></tr>
+  <tr><td>ホイール／ピンチ</td><td>マウス（カーソル）位置を中心に拡大縮小</td></tr>
+  <tr><td>右クリック</td><td>ズーム・視点をリセット</td></tr>
+</table>
+<p>各画像パネル（Axial／Coronal／Sagittal／ICE）に共通の操作は次のとおりです。</p>
+<table class="keys">
+  <tr><th>操作</th><th>できること</th></tr>
+  <tr><td>ピンチ　／　<span class="kbd">⌘</span>+スクロール</td><td>拡大縮小（カーソル位置が中心）</td></tr>
+  <tr><td>ドラッグ</td><td>階調（明るさ・コントラスト）の調整</td></tr>
+  <tr><td>右ドラッグ／ホイール</td><td>拡大縮小（カーソル位置が中心）</td></tr>
+  <tr><td>右クリック</td><td>拡大・位置をリセット</td></tr>
+  <tr><td><span class="kbd">⌥ Option</span>／<span class="kbd">Space</span> + ドラッグ、または中ドラッグ</td><td>画像の移動（パン）</td></tr>
+</table>
+
+<div class="footer-disc">
+  <b>免責事項。</b>本アプリは研究・教育・自己研鑽のための試作品であり、認証された医療機器では
+  ありません。診断・治療を目的とせず、術中ナビゲーションでもありません。表示される数値・経路・
+  強調表示はすべて記述的な参考情報であり、特定の針・経路・手技が安全である、または推奨される
+  ことを意味しません。最終的な臨床判断は、常に術者が行ってください。
+</div>
+
+</body>
+</html>

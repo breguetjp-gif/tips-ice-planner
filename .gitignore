@@ -1,0 +1,46 @@
+# ===== 実患者DICOM由来は絶対にgitに載せない（PHI保護）=====
+real_local/
+*.npy
+*.dcm
+*.csv
+# 描画画像（一部は患者CT由来＝PHI）。.py から再生成可能
+*.png
+*.gif
+*.jpg
+*.jpeg
+*.mp4
+# DB/インベントリのダンプ（患者情報を含み得る）
+inventory.json
+vol_meta.json
+*_list.json
+path_clicks.json
+
+# 外部参照クローン（Miele/OsiriX等）はgit管理外
+_vendor/
+# ビルド成果物
+build/
+DerivedData/
+*.mieleplugin/
+# 配布キット(署名済みバイナリ等)
+dist/
+*.zip
+
+# misc
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+~$*
+
+# Local distribution scripts (may contain personal cloud paths) — never committed
+app/distribute_local.sh
+*_local.sh
+
+# クリック起動アプリ（ユーザー固有のパスを含む・配布はPyInstallerで別途）
+*.app/
+
+# brandアイコン資産（PHIではない）はコミットする
+!app/icon_1024.png
+!app/icon.icns
+!app/icon.ico
+!app/docs/bmc_qr.png

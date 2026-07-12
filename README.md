@@ -1,5 +1,7 @@
 # TIPS ICE Planner
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21328321.svg)](https://doi.org/10.5281/zenodo.21328321)
+
 Pre-procedural planning for **TIPS** (transjugular intrahepatic portosystemic shunt).
 
 From a contrast-enhanced CT, the software **predicts the side-firing ICE (intracardiac
@@ -112,8 +114,13 @@ sample above, which is not the author's own case material.
 
 ## Citation
 
-If this software supports your work, please cite the software paper (in preparation) and the release
-you used. Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
+If this software supports your work, please cite it by its archived DOI. The concept DOI below always
+resolves to the latest release; each release also has its own DOI if you need to pin the exact version
+you ran.
+
+> Yamamoto M. *TIPS ICE Planner.* Zenodo. doi:[10.5281/zenodo.21328321](https://doi.org/10.5281/zenodo.21328321)
+
+Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
 
 ## License
 

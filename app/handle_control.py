@@ -93,6 +93,12 @@ class HandleControl(QWidget):
     # ---------- 描画 ----------
     def paintEvent(self, _):
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
+        self._paint(p, labels=True)
+
+    def _paint(self, p, labels=True):
+        """実際の描画本体。paintEvent(自分自身への描画)と、他ペインの隅への縮小参考表示
+        (main.py MainWindow._draw_handle_ref)の両方から、同じpainterへ直接呼べるよう分離。
+        後者は別ウィジェット/QPixmapを介さない＝入れ子のpaint device生成によるQtの警告を避けるため。"""
         p.fillRect(self.rect(), BG)
         sx, sy, ox, oy = self._frame()
         u = sy                                      # 線幅の基準（縦スケール・引き伸ばしでも太らない）
@@ -187,7 +193,8 @@ class HandleControl(QWidget):
         line([[124, AXY], [130, AXY]], SH, 2.0)
 
         # ===== ラベル＋掴み方 =====
-        self._labels(p, u)
+        if labels:
+            self._labels(p, u)
 
     def _labels(self, p, u):
         """ラベル＝各コントロールの近くに2行（1行目:名前+現在値 / 2行目:操作方法）。

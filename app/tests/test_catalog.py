@@ -214,8 +214,18 @@ def run():
     assert win.aim_tip is not None, "single click sets aim_tip (needle runs from the fixed Entry)"
     win._move_point_ice("aim_tip", win._ice_wi * 0.52, win._ice_hi * 0.47)  # ドラッグで微調整
     win._refresh(); assert win.ice.img is not None                       # 描画経路(針の形＋2cm予測点線＋readout)
-    for pane in (win.ax, win.cor, win.sag):
-        pane.resize(300, 280); pane.grab()                               # CT断面への針形状+予測点線 投影の描画経路
+    # Coronal/Sagittalの隅にAcuNavハンドルの参考絵を小さく重ねる（先生要望・Axial/ICEには出さない）。
+    # unittest.mock.patchで差し替えるとMock自身がQPainter引数への参照をcall_argsに保持し続け、
+    # オフスクリーンQtが「paint device destroyed」警告を出すため、素の関数差し替え(参照を残さない)で検証する。
+    _href_calls = []
+    _orig_href = main.MainWindow._draw_handle_ref
+    main.MainWindow._draw_handle_ref = lambda self, p: _href_calls.append(1)
+    try:
+        for pane in (win.ax, win.cor, win.sag):
+            pane.resize(300, 280); pane.grab()                           # CT断面への針形状+予測点線 投影の描画経路
+        assert len(_href_calls) == 2, f"handle ref must draw exactly for coronal+sagittal, got {len(_href_calls)} calls"
+    finally:
+        main.MainWindow._draw_handle_ref = _orig_href
     pred0 = main.core.predict_curve(win.entry, win.aim_tip, radius=main.core.COLA_R,
                                     span_deg=np.degrees(20.0 / main.core.COLA_R), torque_deg=win.aim_torque)
     assert pred0.shape[1] == 3 and len(pred0) >= 2
@@ -523,6 +533,7 @@ def run():
     win.stack.setCurrentWidget(win.viewer_page)
     assert win.vol is not None and win.current_study_uid, "this point in the test must have a patient open"
     from PySide6.QtGui import QCloseEvent
+    from unittest.mock import patch as _patch
     with _patch.object(main.QMessageBox, "question", return_value=main.QMessageBox.Cancel) as m_q, \
          _patch.object(main.QMessageBox, "information") as m_i:
         ev = QCloseEvent(); win.closeEvent(ev)

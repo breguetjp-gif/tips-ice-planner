@@ -27,7 +27,7 @@ from handle_control import HandleControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.46"                                            # 配布のたびに上げる
+VERSION = "0.4.47"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -2195,6 +2195,29 @@ class MainWindow(QMainWindow):
         pw = self._pred_world()                              # 予習モード：CTミラー
         if pw is not None:
             self._paint_pred(p, pw, lambda Q: to_widget(*core.proj_mm(Q, v.sx, v.sy, v.dz, plane, nz)), label=False)
+        if plane in (1, 2):                                  # Coronal/Sagittal: 手元のAcuNav操作絵を小さく参考表示
+            self._draw_handle_ref(p)
+
+    def _draw_handle_ref(self, p):
+        """Coronal/Sagittalの隅に、下部操作帯の手元(AcuNavハンドル)の絵を小さく重ねる。
+        解剖学的な位置合わせではなく、3D連動パネルと同じ絵を「今どちらに操作しているか」の
+        参考として常時表示する（先生要望、公開前の仕上げ・2026-07-12）。"""
+        dev = p.device()
+        pw, ph = dev.width(), dev.height()
+        hcw, hch = self.handleCtl.width(), self.handleCtl.height()
+        if pw <= 0 or ph <= 0 or hcw <= 0 or hch <= 0:
+            return
+        hw = min(120.0, pw * 0.34); hh = hw * (hch / hcw)
+        hx = pw - hw - 6; hy = ph - hh - 6
+        # handleCtl自身をgrab()/render()すると、pane自身が描画中の入れ子でQt(オフスクリーン)が
+        # 「paint device destroyed」警告を出すことがある。別ウィジェット/QPixmapを介さず、
+        # 同じpainterへ座標変換(平行移動+縮小)した状態で直接描かせる(HandleControl._paint)。
+        p.save(); p.setOpacity(0.92)
+        p.setPen(QPen(QColor(240, 143, 105, 160), 1)); p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(hx - 2, hy - 2, hw + 4, hh + 4), 3, 3)
+        p.translate(hx, hy); p.scale(hw / hcw, hh / hch); p.setClipRect(0, 0, hcw, hch)
+        self.handleCtl._paint(p, labels=False)
+        p.restore()
 
     # ---------- オーバーレイ（ICE） ----------
     def _ice_overlay(self, p, to_widget):

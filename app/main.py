@@ -27,7 +27,7 @@ from handle_control import HandleControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.49"                                            # 配布のたびに上げる
+VERSION = "0.4.50"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -256,6 +256,7 @@ class Pane3D(QWidget):
         self._body_qimg = None; self._body_buf = None
         self.orient = None                                   # index軸→LPS(3x3)。Noneなら標準axial仮定
         self.aim_outline = None; self.aim_pred = None         # 実際の針(半透明)＋Colapinto想定2cm予測(3D)
+        self.aim_tip = None                                   # 実際の針先（円柱風の二重線描画に使う実座標）
         self.cannula_rod = None; self.needle_body = None      # TIPS金属針: 外筒＋（接続部＋針シャフト）
         self.needle_tip = None; self.needle_pred = None       # 金属ベベル先端＋進行方向
         self.dash_phase = 0.0                                 # 進行方向の流れるダッシュ位相（_tick_dashが供給）
@@ -276,6 +277,7 @@ class Pane3D(QWidget):
             self.probe_outline = d.get("probe_outline"); self.probe_face = d.get("probe_face")
             self.entry = d.get("entry"); self.target = d.get("target"); self.apex = d.get("apex")
             self.aim_outline = d.get("aim_outline"); self.aim_pred = d.get("aim_pred")
+            self.aim_tip = d.get("aim_tip")
             self.cannula_rod = d.get("cannula_rod"); self.needle_body = d.get("needle_body")
             self.needle_tip = d.get("needle_tip"); self.needle_pred = d.get("needle_pred")
             if "liver" in d:
@@ -449,7 +451,11 @@ class Pane3D(QWidget):
         if self.needle_tip is not None and len(self.needle_tip) >= 3:        # 先端＝明るいスチールのベベル(尖った切っ先)
             poly = QPolygonF(self._poly(self.needle_tip, c, s, b))
             p.setBrush(QColor(226, 232, 244)); p.setPen(QPen(QColor(150, 158, 172), 1.2)); p.drawPolygon(poly)
-        if self.aim_outline is not None and len(self.aim_outline) >= 3:   # 実際の針(半透明の物体)
+        if self.entry is not None and self.aim_tip is not None:   # 実際の針＝円柱風の二重線（画面座標系の太さは回転しても細く見えない）
+            seg = [np.asarray(self.entry, float), np.asarray(self.aim_tip, float)]
+            self._stroke(p, seg, c, s, b, QColor(255, 250, 235), 6)      # 外周(明るい実際の針色)
+            self._stroke(p, seg, c, s, b, QColor(196, 190, 168), 2)      # 芯の陰影で丸みを出す
+        elif self.aim_outline is not None and len(self.aim_outline) >= 3:   # 旧データ互換（entry/aim_tip 未供給時）
             poly = QPolygonF(self._poly(self.aim_outline, c, s, b))
             p.setBrush(QColor(255, 250, 235, 130)); p.setPen(QPen(QColor(255, 250, 235), 1.5)); p.drawPolygon(poly)
         self._flow(p, self.needle_pred, c, s, b, QColor(255, 255, 255, 235), 3.2)   # 進行方向(流れるダッシュ)
@@ -847,6 +853,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._update_step_ui()
         self._apply_language()                               # 保存済み言語でUI文字列を確定（EN/JA）
+        QApplication.instance().aboutToQuit.connect(self._stop_workers)   # Cmd+Q は closeEvent を通らない
 
     # ---------- 下部コントロール ----------
     def _slider(self, lo, hi, val, cb, w=130):
@@ -2387,6 +2394,21 @@ class MainWindow(QMainWindow):
         self.liver = res; self.p3d.liver = res; self.p3d.update()
         self._maybe_compute_liver()                      # 計算中にパスが変わっていれば追従
 
+    def _stop_workers(self):
+        """走行中の背景スレッド(肝抽出/DICOM読込)に中断を頼み、終わるまで待つ。
+
+        QThread が走行中に破棄されると Qt は qFatal→abort() する。closeEvent だけでは足りない:
+        Cmd+Q や更新後の再起動は QApplication.quit() を通り、closeEvent を呼ばずに終了するため、
+        aboutToQuit からも必ずここを通す。
+        """
+        for w in [getattr(self, "_liver_worker", None), getattr(self, "_body_worker", None)] \
+                + list(getattr(self, "_bg_workers", [])):
+            try:
+                if w is not None and w.isRunning():
+                    w.requestInterruption(); w.wait(3000)
+            except RuntimeError:                         # 既に C++ 側破棄済み等は無視
+                pass
+
     def closeEvent(self, e):
         """終了時、①患者の作業状態が開いていれば保存するか確認（先生要望）、②走行中の背景スレッド
         (肝抽出/DICOM読込)を待つ。QThread が走行中に破棄されると Qt が abort() するため②は必須。"""
@@ -2401,14 +2423,7 @@ class MainWindow(QMainWindow):
                 e.ignore(); return
             if resp == QMessageBox.Yes:
                 self._save_slot(self._pick_save_slot())
-        workers = [getattr(self, "_liver_worker", None), getattr(self, "_body_worker", None)] \
-            + list(getattr(self, "_bg_workers", []))
-        for w in workers:
-            try:
-                if w is not None and w.isRunning():
-                    w.requestInterruption(); w.wait(3000)
-            except RuntimeError:                         # 既に C++ 側破棄済み等は無視
-                pass
+        self._stop_workers()
         super().closeEvent(e)
 
     # ---------- 3D linkage 構築（plugin update3D 相当） ----------

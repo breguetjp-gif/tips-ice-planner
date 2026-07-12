@@ -557,3 +557,30 @@ def run():
 
 if __name__ == "__main__":
     run()
+def test_quit_while_worker_running_does_not_abort(qtbot=None):
+    """Cmd+Q（QApplication.quit()）は closeEvent を呼ばない。走行中の QThread が破棄されると Qt は
+    qFatal→abort() するので、aboutToQuit から _stop_workers() を必ず通す必要がある。
+    実際に SIGABRT を再現したうえで入れた回帰テスト（別プロセスで終了コードを見る）。"""
+    import subprocess, sys, os, textwrap
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    prog = textwrap.dedent(f"""
+        import os, sys, time
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        sys.path.insert(0, {app_dir!r})
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import QTimer
+        app = QApplication.instance() or QApplication([])
+        import main as M, bg
+        win = M.MainWindow(); win.show()
+        def slow(progress):
+            t0 = time.time()
+            while time.time() - t0 < 2.0:
+                time.sleep(0.02)
+        bg.run_with_progress(win, "busy", slow, lambda r: None)
+        QTimer.singleShot(150, app.quit)
+        app.exec()
+    """)
+    r = subprocess.run([sys.executable, "-c", prog], capture_output=True, timeout=60)
+    assert r.returncode == 0, (
+        f"quit-while-busy aborted (rc={r.returncode}; -6/134 = SIGABRT). "
+        f"stderr tail: {r.stderr.decode()[-300:]}")

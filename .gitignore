@@ -44,3 +44,9 @@ app/distribute_local.sh
 !app/icon.icns
 !app/icon.ico
 !app/docs/bmc_qr.png
+
+# サンプルCT(TCIA HCC-TACE-Seg, CC BY 4.0の公開データセット。患者の実データではない)
+# 出典・ライセンス表記は sample_data/ATTRIBUTION.md 参照
+!sample_data/
+!sample_data/**
+!sample_data/**/*.dcm

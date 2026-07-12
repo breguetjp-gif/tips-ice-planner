@@ -63,7 +63,8 @@ first launch.
 >    `~/.tips_planner/venv`.
 
 ### Workflow
-1. **Database** — `Import DICOM folder…`, then double-click a series to open it.
+1. **Database** — `Import DICOM folder…`, then double-click a series to open it. No CT of your own
+   handy? Point it at [`sample_data/HCC048_portal_venous/`](sample_data/HCC048_portal_venous/).
 2. **Step 1 (ICE setup)** — click along the IVC on the axial pane to define the probe path, choose the
    access route (femoral or jugular), then explore with θ / probe position / deflection.
 3. **Step 2 (Needle)** — place Entry and Target; the needle arc is drawn on all four panes.
@@ -89,22 +90,25 @@ Because the plugin links Miele-LXIV in-process, it is a derivative work and is d
 
 ## Example data
 
-The software reads any contrast-enhanced abdominal CT series in DICOM. The figures in the
-accompanying paper and manual are produced from the public **HCC-TACE-Seg** collection of
-The Cancer Imaging Archive, which is released under **CC BY 4.0** and requires no registration:
+The software reads any contrast-enhanced abdominal CT series in DICOM. A portal-venous-phase series
+is required, because the portal vein, hepatic veins and IVC must all be opacified.
+
+A ready-to-open sample is bundled at [`sample_data/HCC048_portal_venous/`](sample_data/HCC048_portal_venous/)
+(89 images, DICOM) so the app can be tried immediately after cloning — no need to source your own CT.
+It is drawn from the public **HCC-TACE-Seg** collection of The Cancer Imaging Archive, released under
+**CC BY 4.0** (no registration required); full attribution and required citations are in
+[`sample_data/ATTRIBUTION.md`](sample_data/ATTRIBUTION.md):
 
 > Moawad AW, Fuentes D, Morshid A, et al. *Multimodality annotated HCC cases with and without
 > advanced imaging segmentation* [Data set]. The Cancer Imaging Archive; 2021.
 > doi:[10.7937/TCIA.5FNA-0924](https://doi.org/10.7937/TCIA.5FNA-0924)
 
-A portal-venous-phase series is required, because the portal vein, hepatic veins and IVC must all be
-opacified.
-
 ## Data and privacy
 
 Patient DICOM never leaves the machine. Imported studies, thumbnails and comments are stored in the
-operating system's per-user application-data folder. **No patient data of any kind is contained in,
-or committed to, this repository** — a clone contains code only.
+operating system's per-user application-data folder. **No private patient data is contained in, or
+committed to, this repository** — the only imaging shipped here is the public-domain, CC BY 4.0
+sample above, which is not the author's own case material.
 
 ## Citation
 

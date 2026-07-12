@@ -27,7 +27,7 @@ from handle_control import HandleControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.48"                                            # 配布のたびに上げる
+VERSION = "0.4.49"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -2107,6 +2107,10 @@ class MainWindow(QMainWindow):
                 p.drawPolygon(QPolygonF([to_widget(cc, rr) for cc, rr in poly]))
                 bm = core.fan_beam_for_plane(g, v.sx, v.sy, v.dz, plane, nz)
                 p.setPen(QPen(QColor(255, 240, 160, 200), 1, Qt.DashLine)); p.drawLine(to_widget(*bm[0]), to_widget(*bm[1]))
+        if plane in (1, 2) and self.viewMode != "surface" and len(self.path) >= 2:   # Coronal/Sagittal
+            # カテーテル本体は背景の参考表示＝Entry/Target/実際の針など主要な描画より先(下)に描き、
+            # 上に重なって隠してしまわないようにする（先生報告「実際の針が描画できていない」の原因）。
+            self._draw_catheter_body(p, to_widget, v, plane, nz)
         if self.viewMode == "surface" and self.contact is not None:   # 経腹プローブ（コンベックス形状）
             if g is not None and plane == self.surfPlane:              # 置いた断面＝プローブを実物形状で描く
                 gl = core.probe_glyph(g)
@@ -2195,8 +2199,6 @@ class MainWindow(QMainWindow):
         pw = self._pred_world()                              # 予習モード：CTミラー
         if pw is not None:
             self._paint_pred(p, pw, lambda Q: to_widget(*core.proj_mm(Q, v.sx, v.sy, v.dz, plane, nz)), label=False)
-        if plane in (1, 2) and self.viewMode != "surface" and len(self.path) >= 2:   # Coronal/Sagittal
-            self._draw_catheter_body(p, to_widget, v, plane, nz)
 
     def _draw_catheter_body(self, p, to_widget, v, plane, nz):
         """3D連動パネルで動いているカテーテル本体(灰シャフト＋偏向で曲がる先端=オレンジ)を、
@@ -2214,10 +2216,10 @@ class MainWindow(QMainWindow):
         def to_pt(P):
             return to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz))
         if b.get("shaft") is not None and len(b["shaft"]) >= 2:
-            p.setPen(QPen(QColor(204, 217, 230), 4)); p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(204, 217, 230, 150), 4)); p.setBrush(Qt.NoBrush)
             p.drawPolyline(QPolygonF([to_pt(P) for P in b["shaft"]]))
         if b.get("orange") is not None and len(b["orange"]) >= 2:
-            p.setPen(QPen(QColor(245, 140, 50), 5)); p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(245, 140, 50, 150), 5)); p.setBrush(Qt.NoBrush)
             p.drawPolyline(QPolygonF([to_pt(P) for P in b["orange"]]))
 
     # ---------- オーバーレイ（ICE） ----------

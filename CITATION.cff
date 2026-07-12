@@ -15,7 +15,7 @@ authors:
     given-names: Masayoshi
     affiliation: "Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
     email: yamamoto.masayoshi.jx@teikyo-u.ac.jp
-version: "0.4.48"
+version: "0.4.49"
 license: GPL-3.0-or-later
 repository-code: "https://github.com/breguetjp-gif/tips-ice-planner"
 keywords:

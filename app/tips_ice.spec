@@ -40,7 +40,7 @@ if sys.platform == 'darwin':
                  bundle_identifier='com.bonchan.tips-ice-planner',
                  info_plist={
                      'NSHighResolutionCapable': True,
-                     'CFBundleShortVersionString': '0.4.52',
+                     'CFBundleShortVersionString': '0.4.53',
                      'LSMinimumSystemVersion': '11.0',
                      # Mieleプラグイン→本アプリの橋渡し用URLスキーム（tipsiceplanner://open?dir=...）
                      'CFBundleURLTypes': [{

@@ -244,3 +244,137 @@ class HandleControl(QWidget):
 
     def mouseReleaseEvent(self, e):
         self._drag = None; self.update()
+
+
+class SurfaceProbeControl(QWidget):
+    """経腹（体表）コンベックスプローブの操作パネル。実機の手の動きに寄せた操作方式：
+    プローブ本体を1箇所ドラッグ＝上下でTilt(b1・面内)・左右でRock(b2・面外)、
+    横の小さいひねりダイヤルを左右ドラッグ＝Rotate(Theta)。push-pull相当は無い
+    （体表上の位置移動はCT断面のクリック/ドラッグで行うため・先生決定2026-07-14）。
+    """
+    b1Changed = Signal(float)        # Tilt（面内）
+    b2Changed = Signal(float)        # Rock（面外）
+    thetaChanged = Signal(float)     # Rotate
+
+    _BODY_CX = 46.0
+    _DIAL_CX = 98.0
+    _DIAL_R = 10.0
+
+    def __init__(self):
+        super().__init__()
+        self.b1 = 0.0; self.b2 = 0.0; self.theta = 180.0
+        self._drag = None; self._p0 = None; self._v0 = None
+        self.setMinimumHeight(108)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setToolTip(L("Drag the probe: up/down = tilt, left/right = rock.  Drag the small dial: rotate.",
+                          "プローブをドラッグ：上下=傾き(Tilt)、左右=あおり(Rock)。横の小さいダイヤル=回転。"))
+
+    def set_state(self, b1, b2, theta):
+        self.b1 = float(b1); self.b2 = float(b2); self.theta = float(theta)
+        self.update()
+
+    # ---------- 座標変換（HandleControlと同じモック座標系を流用） ----------
+    def _frame(self):
+        W, H = self.width(), self.height()
+        sy = H / MH
+        sx = min(W / MW, sy * 2.6)
+        ox = (W - MW * sx) / 2.0; oy = (H - MH * sy) / 2.0
+        return sx, sy, ox, oy
+
+    def _px(self, x, y):
+        sx, sy, ox, oy = self._frame(); return QPointF(ox + x * sx, oy + (MH - y) * sy)
+
+    def _mock(self, pos):
+        sx, sy, ox, oy = self._frame(); return (pos.x() - ox) / sx, MH - (pos.y() - oy) / sy
+
+    # ---------- 描画 ----------
+    def paintEvent(self, _):
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), BG)
+        sx, sy, ox, oy = self._frame(); u = sy
+
+        def poly(pts2):
+            return QPolygonF([self._px(x, y) for x, y in pts2])
+
+        cx = self._BODY_CX
+        tilt = np.radians(self.b1) * 0.35     # 見た目の傾き（誇張しすぎない範囲に圧縮）
+        rock = np.radians(self.b2) * 0.35
+
+        # ===== 持ち手（角丸っぽい台形）：傾き・あおりに応じてシアー(せん断)させる =====
+        hw, hh = 13.0, 15.0
+        handle = np.array([[-hw, hh], [hw, hh], [hw, -2.0], [-hw, -2.0]])
+        shear = np.array([np.sin(rock) * (handle[:, 1] + 2.0), np.sin(tilt) * (handle[:, 1] + 2.0) * 0.4]).T
+        handle = handle + shear + np.array([cx, AXY + 6.0])
+        active_body = self._drag == 'tilt_rock'
+        p.setBrush(QBrush(TEAL_L if active_body else TEAL)); p.setPen(QPen(TEAL_D, max(1.0, 1.4 * u)))
+        p.drawPolygon(poly(handle))
+
+        # ===== コンベックス面（下端の弧）：体表に当てる探触子の顔 =====
+        t = np.linspace(-1.0, 1.0, 24)
+        top = np.column_stack([cx + t * (hw + 2.0), AXY - 2.0 - (1 - t ** 2) * 6.0])
+        bot = np.column_stack([cx + t * (hw + 2.0), AXY - 2.0 - (1 - t ** 2) * 6.0 + 4.0])
+        face = np.vstack([top, bot[::-1]])
+        face = face + np.array([np.sin(rock) * -3.0, np.sin(tilt) * -2.0])
+        p.setBrush(QBrush(STEEL)); p.setPen(QPen(STEEL_D, max(1.0, 1.2 * u)))
+        p.drawPolygon(poly(face))
+
+        # ===== 中心ビーム方向の目安線 =====
+        beam_end = (cx + np.sin(rock) * 11.0, AXY - 8.0 - np.sin(tilt) * 7.0)
+        p.setPen(QPen(CY, max(1.0, 1.0 * u))); p.setBrush(Qt.NoBrush)
+        p.drawLine(self._px(cx, AXY - 2.0), self._px(*beam_end))
+
+        # ===== ひねりダイヤル（回転） =====
+        dcx = self._DIAL_CX; R = self._DIAL_R
+        active_dial = self._drag == 'theta'
+        p.setBrush(QBrush(QColor(60, 70, 82))); p.setPen(QPen(TER if active_dial else STEEL_D, max(1.0, (1.6 if active_dial else 1.2) * u)))
+        p.drawEllipse(self._px(dcx, AXY), R * sx, R * sy)
+        th = np.radians(self.theta)
+        p.setPen(QPen(TER, max(1.2, 1.6 * u)))
+        p.drawLine(self._px(dcx, AXY), self._px(dcx + R * 0.8 * np.sin(th), AXY + R * 0.8 * np.cos(th)))
+
+        self._labels(p)
+
+    def _labels(self, p):
+        f = QFont(); f.setPixelSize(11); f.setBold(True)
+        fs = QFont(); fs.setPixelSize(9)
+
+        def txt2(x, y, col, main, sub, above=True):
+            pt = self._px(x, y)
+            wm = QFontMetrics(f).horizontalAdvance(main); ws = QFontMetrics(fs).horizontalAdvance(sub)
+            if above:
+                y_sub, y_main = pt.y(), pt.y() - 12
+            else:
+                y_main, y_sub = pt.y(), pt.y() + 12
+            p.setFont(f); p.setPen(col); p.drawText(QPointF(pt.x() - wm / 2, y_main), main)
+            p.setFont(fs); p.setPen(GREY); p.drawText(QPointF(pt.x() - ws / 2, y_sub), sub)
+
+        txt2(self._BODY_CX, AXY + 21, TER,
+             L("Tilt", "傾き") + f"  {self.b1:+.0f}°", L("drag ↕", "上下ドラッグ"), above=True)
+        txt2(self._BODY_CX, AXY - 15, TER,
+             L("Rock", "あおり") + f"  {self.b2:+.0f}°", L("drag ↔", "左右ドラッグ"), above=False)
+        txt2(self._DIAL_CX, AXY + 15, AMB,
+             L("Rotate", "回転") + f"  {self.theta:.0f}°", L("drag ↔", "左右ドラッグ"), above=True)
+
+    # ---------- マウス（プローブ本体＝Tilt/Rock、ダイヤル＝Rotate） ----------
+    def mousePressEvent(self, e):
+        mx, my = self._mock(e.position()); reg = None
+        if self._BODY_CX - 16 <= mx <= self._BODY_CX + 16 and AXY - 12 <= my <= AXY + 22:
+            reg = 'tilt_rock'
+        elif (mx - self._DIAL_CX) ** 2 + (my - AXY) ** 2 <= self._DIAL_R ** 2:
+            reg = 'theta'
+        self._drag = reg; self._p0 = e.position(); self._v0 = (self.b1, self.b2, self.theta)
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None:
+            return
+        d = e.position() - self._p0; b1, b2, th = self._v0
+        if self._drag == 'tilt_rock':
+            self.b1 = max(-80.0, min(80.0, b1 + (-d.y()) * 0.5)); self.b1Changed.emit(self.b1)
+            self.b2 = max(-80.0, min(80.0, b2 + d.x() * 0.5)); self.b2Changed.emit(self.b2)
+        elif self._drag == 'theta':
+            self.theta = (th + d.x() * 0.7) % 360.0; self.thetaChanged.emit(self.theta)
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None; self.update()

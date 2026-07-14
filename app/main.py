@@ -23,11 +23,11 @@ import dicom_io
 import i18n
 from i18n import L
 import settings_store
-from handle_control import HandleControl
+from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.52"                                            # 配布のたびに上げる
+VERSION = "0.4.53"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -829,6 +829,12 @@ class MainWindow(QMainWindow):
         self.handleCtl.b2Changed.connect(lambda x: self.sB2.setValue(int(round(x))))
         self.handleCtl.thetaChanged.connect(lambda x: self.sTheta.setValue(int(round(x)) % 360))
         self.handleCtl.probeChanged.connect(lambda x: self.sProbe.setValue(int(round(x))) if self.sProbe.isEnabled() else None)
+        # 経腹（体表）モード専用パネル＝同じ場所でHandleControlと表示を切り替える（先生指定2026-07-14）。
+        self.surfCtl = SurfaceProbeControl()
+        self.surfCtl.setVisible(False)                       # 既定はICEモードなので最初は隠す
+        self.surfCtl.b1Changed.connect(lambda x: self.sB1.setValue(int(round(x))))
+        self.surfCtl.b2Changed.connect(lambda x: self.sB2.setValue(int(round(x))))
+        self.surfCtl.thetaChanged.connect(lambda x: self.sTheta.setValue(int(round(x)) % 360))
 
         root = QVBoxLayout(); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
         root.addWidget(center, 1)
@@ -933,6 +939,7 @@ class MainWindow(QMainWindow):
         self.probeFoot = self._lbl("foot", "足側"); self.probeHead = self._lbl("head", "頭側")
         self.lblAP = self._acc("Deflect A/P"); self.lblLR = self._acc("Deflect L/R")
         h.addWidget(self.handleCtl, 2)
+        h.addWidget(self.surfCtl, 2)
         h.addWidget(self._btn("Zero deflect", self._zero_defl, ja="偏向ゼロ"))
         h.addWidget(_sep())
         # --- 右ブロック: ロール／反転＋肝臓ゴースト（2行・常時表示） ---
@@ -975,8 +982,12 @@ class MainWindow(QMainWindow):
         return box
 
     def _sync_handle(self):
-        """現在の θ/b1/b2/probe をハンドルの絵へ反映（スライダー操作や状態復元と同期）。"""
+        """現在の θ/b1/b2/probe を、今表示中の操作ウィジェットの絵へ反映（スライダー操作や状態復元と同期）。
+        経腹（体表）モードではSurfaceProbeControl、それ以外ではHandleControlを更新する。"""
         if not hasattr(self, "handleCtl"):
+            return
+        if self.viewMode == "surface":
+            self.surfCtl.set_state(self.b1, self.b2, self.theta)
             return
         path = getattr(self, "path", []); pf = 50.0; en = False
         if len(path) >= 2:
@@ -1891,13 +1902,13 @@ class MainWindow(QMainWindow):
         self._set_viewmode("surface" if self.viewMode == "ice" else "ice")
 
     def _update_mode_ui(self):
-        """経腹モードではθ/A/P/L/Rを『回転/傾き/あおり』に読み替え、push-pullを隠す。"""
+        """経腹モードでは操作ウィジェットをHandleControl→SurfaceProbeControlへ丸ごと切り替える
+        （先生指定2026-07-14：ラベルの読み替えではなく専用ウィジェットへスイッチ）。"""
         surf = (self.viewMode == "surface")
-        self.lblTheta.setText(L("Rotate", "回転") if surf else L("Rotate θ", "回転 θ"))
-        self.lblAP.setText(L("Tilt (in-plane)", "傾き（面内）") if surf else L("Deflect A/P", "偏向 A/P"))
-        self.lblLR.setText(L("Rock (out-of-plane)", "あおり（面外）") if surf else L("Deflect L/R", "偏向 L/R"))
+        self.handleCtl.setVisible(not surf); self.surfCtl.setVisible(surf)
         for w in (self.lblProbe, self.probeFoot, self.sProbe, self.probeHead):
             w.setVisible(not surf)                            # 経腹は push-pull なし
+        self._sync_handle()
         self.ax.caption = (L("Axial  (click/drag = place probe on skin)", "Axial（クリック/ドラッグ = 体表にプローブ）")
                            if surf else L("Axial  (click = IVC path / Entry-Target)", "Axial（クリック = IVCパス / Entry-Target）"))
         self.cor.caption = (L("Coronal  (click/drag = place probe on skin)", "Coronal（クリック/ドラッグ = 体表にプローブ）")

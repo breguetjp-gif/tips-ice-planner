@@ -339,7 +339,7 @@ def run():
     win.open_external_path(os.path.join(tmp, "does-not-exist"))   # 不正パスでも落ちない
     # 経腹エコー(体表)モード: 切替→ラベル読み替え→皮膚にプローブ設置→凸扇geom＋描画(3Dはカテーテル無し)
     win.stack.setCurrentWidget(win.viewer_page)
-    win._toggle_viewmode(); assert win.viewMode == "surface" and win.lblAP.text().startswith("Tilt")
+    win._toggle_viewmode(); assert win.viewMode == "surface" and win.surfCtl.isVisible() and not win.handleCtl.isVisible()
     _place = ((0, lambda: win._axial_click(vol2.shape[2] // 2, 3)),      # Axial
               (1, lambda: win._ortho_click(1, vol2.shape[2] // 2, 3)),   # Coronal
               (2, lambda: win._ortho_click(2, vol2.shape[1] // 2, 3)))   # Sagittal
@@ -360,7 +360,7 @@ def run():
     win.p3d.show_body = True; win.p3d.resize(300, 280); win.p3d.grab()   # 体表シェル描画経路
     for pane in (win.ax, win.cor, win.sag, win.p3d):
         pane.resize(300, 280); pane.grab()                       # 断面ゴースト＋接触点＋3D(扇のみ)描画経路
-    win._toggle_viewmode(); assert win.viewMode == "ice" and win.lblAP.text().startswith("Deflect")
+    win._toggle_viewmode(); assert win.viewMode == "ice" and win.handleCtl.isVisible() and not win.surfCtl.isVisible()
     # --- v0.4.22: 3Dズーム整合 / パンoffset / レイアウト固定 / 言語切替 ---
     from PySide6.QtCore import QPointF
     from tips_core import liver as liver_core
@@ -413,7 +413,6 @@ def run():
     i18n.set_lang("ja"); win._apply_language()                # 言語切替（英→日→英）
     assert win.surfBtn.text() == "経腹（体表）", win.surfBtn.text()
     assert win.db.openBtn.text() == "開く" and i18n.lang() == "ja"
-    assert win.lblAP.text().startswith("偏向"), win.lblAP.text()
     i18n.set_lang("en"); win._apply_language()
     assert win.surfBtn.text().startswith("Transabdominal") and i18n.lang() == "en"
     # --- v0.4.32: 患者リスト画面(DatabaseView)にも言語切替ボタン(先生要望) ---
@@ -615,3 +614,48 @@ def test_new_patient_always_starts_at_step0():
     assert win.ptMode == 0
     assert win.entry is None and win.target is None
     assert not win.needleRowW.isVisible(), "Step1では針操作行は畳まれているべき"
+
+
+def test_surface_mode_switches_to_dedicated_probe_widget():
+    """先生指定の回帰テスト：経腹（体表）モードに切り替えると、ICEモードのHandleControlではなく
+    専用のSurfaceProbeControlへ操作ウィジェットが丸ごと切り替わること。ドラッグでTilt/Rock/Rotate
+    (b1/b2/theta)が実際に動くこと（プローブ本体=Tilt/Rock、ダイヤル=Rotate）も検証する。"""
+    import main as M
+    from handle_control import SurfaceProbeControl, AXY
+    from PySide6.QtCore import QPointF
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    win = M.MainWindow(); win.show()
+    win.stack.setCurrentWidget(win.viewer_page)          # 操作パネルはviewer_page側にある
+    assert win.handleCtl.isVisible() and not win.surfCtl.isVisible(), "既定はICEモード=HandleControl表示"
+
+    win._set_viewmode("surface")
+    assert win.surfCtl.isVisible() and not win.handleCtl.isVisible(), "経腹モードではSurfaceProbeControlに切り替わる"
+
+    win._set_viewmode("ice")
+    assert win.handleCtl.isVisible() and not win.surfCtl.isVisible(), "ICEへ戻すとHandleControlに戻る"
+
+    # --- SurfaceProbeControl単体でのドラッグ操作を検証 ---
+    ctl = SurfaceProbeControl()
+    ctl.resize(160, 108)
+    got = {"b1": None, "b2": None, "theta": None}
+    ctl.b1Changed.connect(lambda v: got.__setitem__("b1", v))
+    ctl.b2Changed.connect(lambda v: got.__setitem__("b2", v))
+    ctl.thetaChanged.connect(lambda v: got.__setitem__("theta", v))
+
+    p0 = ctl._px(ctl._BODY_CX, AXY + 6.0)    # プローブ本体の中心付近
+    ctl.mousePressEvent(type("E", (), {"position": lambda self=None: p0})())
+    assert ctl._drag == "tilt_rock"
+    p1 = QPointF(p0.x() + 8, p0.y() - 10)     # 右上へドラッグ = Rockプラス・Tiltプラス
+    ctl.mouseMoveEvent(type("E", (), {"position": lambda self=None: p1})())
+    assert got["b1"] is not None and got["b1"] > 0, "上ドラッグでTilt(b1)が増えるべき"
+    assert got["b2"] is not None and got["b2"] > 0, "右ドラッグでRock(b2)が増えるべき"
+    ctl.mouseReleaseEvent(type("E", (), {})())
+
+    d0 = ctl._px(ctl._DIAL_CX, AXY)           # ひねりダイヤルの中心
+    ctl.mousePressEvent(type("E", (), {"position": lambda self=None: d0})())
+    assert ctl._drag == "theta"
+    d1 = QPointF(d0.x() + 12, d0.y())
+    ctl.mouseMoveEvent(type("E", (), {"position": lambda self=None: d1})())
+    assert got["theta"] is not None, "ダイヤルの左右ドラッグでRotate(theta)が変化するべき"

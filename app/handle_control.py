@@ -293,38 +293,56 @@ class SurfaceProbeControl(QWidget):
         p.fillRect(self.rect(), BG)
         sx, sy, ox, oy = self._frame(); u = sy
 
-        def poly(pts2):
-            return QPolygonF([self._px(x, y) for x, y in pts2])
-
         cx = self._BODY_CX
         tilt = np.radians(self.b1) * 0.35     # 見た目の傾き（誇張しすぎない範囲に圧縮）
         rock = np.radians(self.b2) * 0.35
-
-        # ===== プローブ本体：実機のコンベックス探触子と同じ「丸い凸面→なだらかに細い持ち手」
-        #      の一体シルエット（マイク型）。市販の超音波プローブアイコンの共通形状を採用
-        #      （先生指摘：ハンドルと凸面が別々で分かりづらい・2026-07-14）。=====
-        base_y = AXY - 9.0                                  # 凸面の最下点（皮膚に当たる先端）
-        def profile(y):                                     # yはbase_yからの相対高さ、半幅を返す
-            if y < 6.0:                                     # 凸面：楕円の四半弧＝丸い(円い)ドーム
-                t = min(1.0, y / 6.0)
-                return 9.5 * np.sqrt(max(0.0, 1.0 - (1.0 - t) ** 2))
-            if y < 11.0:                                     # 首：凸面から細いハンドルへなだらかに絞る
-                return float(np.interp(y, [6.0, 11.0], [9.5, 3.5]))
-            return 3.5                                       # ハンドル：細い円筒（凸面より明確に細く）
-        ys = np.linspace(0.0, 26.0, 48)
-        rs = np.array([profile(y) for y in ys])
-        outline = np.vstack([np.column_stack([-rs, ys]), np.column_stack([rs, ys])[::-1]])
-        shear = np.array([np.sin(rock) * (outline[:, 1] + 9.0), np.sin(tilt) * (outline[:, 1] + 9.0) * 0.4]).T
-        outline = outline + shear + np.array([cx, base_y])
+        base_y = AXY - 10.0                                 # アレイ凸面（皮膚接触側）のあたり
         active_body = self._drag == 'tilt_rock'
-        p.setBrush(QBrush(TEAL_L if active_body else TEAL)); p.setPen(QPen(TEAL_D, max(1.0, 1.4 * u)))
-        p.drawPolygon(poly(outline))
 
-        # ===== 中心ビーム方向の目安線（凸面の先端から） =====
-        tip = (cx + np.sin(rock) * 9.0, base_y + np.sin(tilt) * 3.6)
-        beam_end = (cx + np.sin(rock) * 20.0, base_y - 13.0 - np.sin(tilt) * 7.0)
-        p.setPen(QPen(CY, max(1.0, 1.0 * u))); p.setBrush(Qt.NoBrush)
-        p.drawLine(self._px(*tip), self._px(*beam_end))
+        # 傾き(tilt=縦)・あおり(rock=横)でプローブ全体を接触点まわりにせん断（握って傾けた見た目）
+        def place(pts):
+            a = np.asarray(pts, float); lever = a[:, 1] - 0.5
+            sh = np.column_stack([np.sin(rock) * lever, np.sin(tilt) * lever * 0.4])
+            return QPolygonF([self._px(x, y) for x, y in (a + sh + np.array([cx, base_y]))])
+
+        # ===== 実機コンベックス探触子に寄せた造形（白い筐体＋青いアレイ凸面＋ボタン＋ケーブル）。
+        #      BioRenderの凸プローブ図を参考に詳細化（先生指摘2026-07-14）。=====
+        ARR = QColor(80, 146, 196); ARR_D = QColor(42, 90, 138)   # アレイ凸面の青（走査面）
+
+        # ケーブル（頂部から出て少しS字にカーブ・筐体の裏に隠れるので先に描く）
+        cable = [(0.0, 22.0), (1.8, 26.0), (-1.4, 30.0), (0.8, 33.5)]
+        p.setPen(QPen(STEEL_D, max(1.4, 1.8 * u))); p.setBrush(Qt.NoBrush)
+        p.drawPolyline(place(cable))
+
+        # 筐体（白〜淡グレーのハウジング：肩でアレイ幅に広がり、上は丸めて頂部からケーブル）
+        housing = [(-6.6, 2.2), (-9.0, 4.0), (-7.8, 7.0), (-7.4, 16.2), (-6.3, 19.4),
+                   (-4.0, 21.4), (-2.1, 22.2), (2.1, 22.2), (4.0, 21.4), (6.3, 19.4),
+                   (7.4, 16.2), (7.8, 7.0), (9.0, 4.0), (6.6, 2.2), (0.0, 1.4)]
+        p.setBrush(QBrush(STEEL_H if active_body else STEEL)); p.setPen(QPen(STEEL_D, max(1.0, 1.3 * u)))
+        p.drawPolygon(place(housing))
+
+        # 筐体のつや（左寄りの淡い縦ハイライトで丸みを出す）
+        gloss = [(-5.6, 6.0), (-3.4, 6.0), (-2.8, 16.5), (-5.0, 18.5)]
+        p.setBrush(QBrush(QColor(255, 255, 255, 70))); p.setPen(Qt.NoPen)
+        p.drawPolygon(place(gloss))
+
+        # アレイ凸面（青い三日月＝皮膚に当てる走査面。中央が最も下＝凸）
+        ax = np.linspace(-9.0, 9.0, 22)
+        top = np.column_stack([ax, 3.8 - (1 - (ax / 9.0) ** 2) * 0.8])
+        bot = np.column_stack([ax, 1.0 - (1 - (ax / 9.0) ** 2) * 3.2])
+        face = np.vstack([top, bot[::-1]])
+        p.setBrush(QBrush(ARR)); p.setPen(QPen(ARR_D, max(1.0, 1.1 * u)))
+        p.drawPolygon(place(face))
+
+        # 操作ボタン（筐体前面の小さな丸）
+        bc = place([(0.0, 11.0)])[0]
+        p.setBrush(QBrush(QColor(120, 172, 212))); p.setPen(QPen(STEEL_D, max(0.8, 0.8 * u)))
+        p.drawEllipse(bc, 1.9 * sx, 1.9 * sy)
+
+        # ===== 中心ビーム方向の目安線（アレイ凸面の中心から皮下へ） =====
+        beam = place([(0.0, 0.8), (0.0, -12.0)])
+        p.setPen(QPen(CY, max(1.0, 1.1 * u))); p.setBrush(Qt.NoBrush)
+        p.drawLine(beam[0], beam[1])
 
         # ===== ひねりダイヤル（回転） =====
         dcx = self._DIAL_CX; R = self._DIAL_R
@@ -361,7 +379,7 @@ class SurfaceProbeControl(QWidget):
     # ---------- マウス（プローブ本体＝Tilt/Rock、ダイヤル＝Rotate） ----------
     def mousePressEvent(self, e):
         mx, my = self._mock(e.position()); reg = None
-        if self._BODY_CX - 14 <= mx <= self._BODY_CX + 14 and AXY - 10 <= my <= AXY + 18:
+        if self._BODY_CX - 13 <= mx <= self._BODY_CX + 13 and AXY - 12 <= my <= AXY + 20:
             reg = 'tilt_rock'
         elif (mx - self._DIAL_CX) ** 2 + (my - AXY) ** 2 <= self._DIAL_R ** 2:
             reg = 'theta'

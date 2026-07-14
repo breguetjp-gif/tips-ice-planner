@@ -4,7 +4,7 @@ from .geometry import (
     straight_path, needle_assembly, rups_path, colapinto_path, path_tangent,
     predict_straight, predict_curve, predict_readout, fit_circle_radius, COLA_R,
     proj_mm, fan_fill_for_plane, fan_beam_for_plane,
-    aim_readout, surface_geometry, snap_to_skin, probe_glyph, needle_glyph, ice_coplanarity,
+    aim_readout, surface_geometry, best_surface_theta, snap_to_skin, probe_glyph, needle_glyph, ice_coplanarity,
     R_DEPTH, FAN_HALF, PXMM, WL_DEFAULT, WW_DEFAULT,
     CONVEX_R0, CONVEX_DEPTH, CONVEX_FAN, nrm, rot3,
 )
@@ -14,7 +14,7 @@ __all__ = [
     "straight_path", "needle_assembly", "rups_path", "colapinto_path", "path_tangent",
     "predict_straight", "predict_curve", "predict_readout", "fit_circle_radius", "COLA_R",
     "proj_mm", "fan_fill_for_plane", "fan_beam_for_plane",
-    "aim_readout", "surface_geometry", "snap_to_skin", "probe_glyph", "needle_glyph", "ice_coplanarity",
+    "aim_readout", "surface_geometry", "best_surface_theta", "snap_to_skin", "probe_glyph", "needle_glyph", "ice_coplanarity",
     "R_DEPTH", "FAN_HALF", "PXMM", "WL_DEFAULT", "WW_DEFAULT",
     "CONVEX_R0", "CONVEX_DEPTH", "CONVEX_FAN", "nrm", "rot3",
 ]

@@ -579,6 +579,38 @@ def surface_geometry(contact, inward_normal, theta_deg, tilt_deg, rock_deg, sx, 
     return dict(Tp=C, Vp=Vp, Sp=Sp, fan_half=fan_half, R=r0 + depth, r0=r0, mode="surface")
 
 
+def best_surface_theta(contact, inward_normal, entry, target, plane_axis=(0.0, 0.0, 1.0), step_deg=0.5):
+    """経腹プローブの扇平面（接触点を頂点・法線 n0 を含む）が Entry/Target を最もよく含む θ(度)。
+      tilt=rock=0 のとき扇平面は {n0, u(θ)} で張られ、θ は u を n0 まわりに回す。
+      3点（接触点＝頂点は常に面内）＋Entry＋Target が同一断面に乗る初期表示に使う（先生要望2026-07-14）。
+      plane_axis は surface_geometry と同じもの（＝u0 の基準）を渡すこと。返り値: θ(度)。"""
+    C = np.asarray(contact, float)
+    n0 = nrm(np.asarray(inward_normal, float))
+    if np.linalg.norm(n0) < 1e-6:
+        n0 = np.array([0.0, 1.0, 0.0])
+    E = np.asarray(entry, float) - C
+    T = np.asarray(target, float) - C
+    pa = nrm(np.asarray(plane_axis, float))
+    u0 = np.cross(n0, pa)
+    if np.linalg.norm(u0) < 1e-6:
+        u0 = np.cross(n0, [1.0, 0.0, 0.0])
+        if np.linalg.norm(u0) < 1e-6:
+            u0 = np.cross(n0, [0.0, 1.0, 0.0])
+    u0 = nrm(u0)
+    best_th, best_off = 0.0, 1e18
+    m = int(round(360.0 / step_deg))
+    for i in range(m):
+        u = rot3(u0, n0, np.radians(i * step_deg))
+        w = np.cross(n0, u); nw = np.linalg.norm(w)
+        if nw < 1e-6:
+            continue
+        w = w / nw                                          # 扇平面の法線
+        off = max(abs(float(E @ w)), abs(float(T @ w)))     # Entry/Target の面外ズレ(mm)
+        if off < best_off:
+            best_off, best_th = off, i * step_deg
+    return best_th
+
+
 def needle_glyph(p1, tip, width=2.2, taper=7.0):
     """実際の針の外形（world 3D点）。軸(p1→tip)の細いシャフト＋トロカール状の対称テーパー先端。
       半透明で重ねて描く『線ではなく物体』の表現。UIで掴む点は p1/tip のまま。

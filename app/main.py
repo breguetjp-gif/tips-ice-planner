@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.55"                                            # 配布のたびに上げる
+VERSION = "0.4.56"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -1704,7 +1704,7 @@ class MainWindow(QMainWindow):
             (cc, rr), (nx, ny) = core.snap_to_skin(sl, col, row, v.sy, v.dz)
             self.contact = np.array([self.cx * v.sx, cc * v.sy, ((nz - 1) - rr) * v.dz])
             self.normal = np.array([0.0, nx, -ny])
-        self.surfPlane = plane; self._refresh()
+        self.surfPlane = plane; self._auto_orient_surface(); self._refresh()
 
     def _axial_click(self, col, row):
         if self.vol is None:
@@ -2014,21 +2014,39 @@ class MainWindow(QMainWindow):
         self.actInsFem.setChecked(fem); self.actInsJug.setChecked(not fem)
 
     # ---------- 再描画 ----------
+    def _surf_plane_axis(self):
+        """経腹モードの撮像面の法線（θ回転の基準）。置いたCT断面の法線／3D自由設置は
+        ビームと鉛直を含む面。_geom と _auto_orient_surface で同一の基準を使うため共通化。"""
+        if self.surfPlane in (0, 1, 2):
+            return np.array([(0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)][self.surfPlane])
+        n0 = self.normal / (np.linalg.norm(self.normal) + 1e-9)
+        axis = np.cross(n0, [0.0, 0.0, 1.0])
+        if np.linalg.norm(axis) < 1e-3:
+            axis = np.array([1.0, 0.0, 0.0])
+        return axis
+
+    def _auto_orient_surface(self):
+        """経腹モードでプローブを置いたら、接触点＋Entry＋Targetの3点が最もよく乗る断面へ
+        扇を自動回転（θ）し、傾き/あおりは0に戻して『3点が映る断面』を初期表示する。
+        Entry/Target 未設定なら何もしない（先生要望2026-07-14）。"""
+        if self.viewMode != "surface" or self.contact is None or self.normal is None:
+            return
+        if self.entry is None or self.target is None:
+            return
+        best = core.best_surface_theta(self.contact, self.normal, self.entry, self.target,
+                                       plane_axis=self._surf_plane_axis())
+        self.theta = float(best); self.b1 = 0.0; self.b2 = 0.0
+        for s, val in ((self.sTheta, self.theta), (self.sB1, self.b1), (self.sB2, self.b2)):
+            s.blockSignals(True); s.setValue(int(round(val))); s.blockSignals(False)
+
     def _geom(self):
         if self.vol is None:
             return None
         if self.viewMode == "surface":                       # 経腹: 接触点から体内へ向く凸型扇
             if self.contact is None:
                 return None
-            if self.surfPlane in (0, 1, 2):                  # CT断面に置いた→その面内に扇
-                axis = [(0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)][self.surfPlane]
-            else:                                            # 3D体表に置いた→ビームと鉛直を含む面
-                n0 = self.normal / (np.linalg.norm(self.normal) + 1e-9)
-                axis = np.cross(n0, [0.0, 0.0, 1.0])
-                if np.linalg.norm(axis) < 1e-3:
-                    axis = np.array([1.0, 0.0, 0.0])
             return core.surface_geometry(self.contact, self.normal, self.theta, self.b1, self.b2,
-                                         self.vol.sx, self.vol.sy, self.vol.dz, plane_axis=axis)
+                                         self.vol.sx, self.vol.sy, self.vol.dz, plane_axis=self._surf_plane_axis())
         if len(self.path) < 2:
             return None
         return core.ice_geometry(self.path, self.zP, self.theta, self.b1, self.b2,
@@ -2359,7 +2377,7 @@ class MainWindow(QMainWindow):
         n_in = -np.asarray(self.body["nrm"][idx], float)      # 外向き法線→内向き
         nn = np.linalg.norm(n_in); self.normal = n_in / nn if nn > 1e-6 else np.array([0.0, 1.0, 0.0])
         self.surfPlane = -1                                    # 3D自由設置
-        self._refresh()
+        self._auto_orient_surface(); self._refresh()
 
     def _maybe_compute_liver(self):
         """IVCパス(≥2点)が確定/変化したら肝臓を背景スレッドで自動抽出（モーダル無し）。"""

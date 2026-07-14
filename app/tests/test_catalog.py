@@ -349,6 +349,13 @@ def run():
         win._refresh(); assert win.ice.img is not None, f"transabdominal echo must render (plane {_pl})"
     win._move_point("contact", vol2.shape[2] // 2, 5, 0)          # ドラッグ=皮膚上を移動(Axial)
     assert win.surfPlane == 0 and win.contact is not None, "drag moves the probe along the surface"
+    # 自動オリエント: Entry/Target設定済みでプローブを置くと、3点が乗る断面へθが自動回転（先生要望2026-07-14）
+    win.entry = np.array([vol2.shape[2] * 0.4 * vol2.sx, vol2.shape[1] * 0.5 * vol2.sy, 20 * vol2.dz])
+    win.target = np.array([vol2.shape[2] * 0.6 * vol2.sx, vol2.shape[1] * 0.5 * vol2.sy, 25 * vol2.dz])
+    win.theta = 0.0; win._axial_click(vol2.shape[2] // 2, 3)      # 設置→_auto_orient_surface発火
+    _g = win._geom(); _w = np.cross(_g["Vp"], _g["Sp"]); _w = _w / (np.linalg.norm(_w) + 1e-9); _C = np.asarray(_g["Tp"])
+    assert abs((win.entry - _C) @ _w) < 6.0 and abs((win.target - _C) @ _w) < 6.0, "3点が同一断面に近づくようθ自動回転"
+    assert win.b1 == 0.0 and win.b2 == 0.0, "初期表示は傾き/あおり0"
     # 3D体表: bodyを注入→3Dピックでプローブ設置(surfPlane=-1)＋その面での凸扇geom
     _surf = np.array([[30, 10, 10], [31, 10, 10], [30, 12, 11]], np.float32)
     win.body = dict(surf=_surf, nrm=np.tile([0, -1, 0.0], (3, 1)).astype(np.float32),

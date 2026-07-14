@@ -253,6 +253,18 @@ def test_features():
     assert abs(ip["off_entry"]) < 1e-6 and abs(ip["off_target"]) < 1e-6
     op = core.ice_coplanarity(gp, [3, 0, 2], [2, 5, -1])             # target y=5 → 面外
     assert abs(op["off_target"]) > 4.0 and op["best_off"] < max(abs(op["off_entry"]), abs(op["off_target"]))
+    # best_surface_theta: 経腹プローブ設置時に Entry/Target/接触点の3点が乗る断面(θ)を返す
+    C = np.array([100.0, 50.0, 80.0]); n0 = np.array([0.0, 1.0, 0.0])   # 体内向き法線
+    E = C + np.array([10.0, 20.0, 0.0]); T = C + np.array([-8.0, 40.0, 0.0])  # z=一定→ある面内
+    th = core.best_surface_theta(C, n0, E, T, plane_axis=(0, 0, 1))
+    g_s = core.surface_geometry(C, n0, th, 0, 0, 1, 1, 1, plane_axis=(0, 0, 1))
+    w = np.cross(g_s["Vp"], g_s["Sp"]); w = w / np.linalg.norm(w)       # 扇平面の法線
+    assert abs((E - C) @ w) < 0.5 and abs((T - C) @ w) < 0.5, "3点が同一断面に乗るθを返す"
+    # ねじれ配置でも最小の面外ズレ(minimax)を返す＝2点の面外距離がほぼ均衡
+    T2 = C + np.array([-8.0, 40.0, 50.0]); th2 = core.best_surface_theta(C, n0, E, T2, plane_axis=(0, 0, 1))
+    g2 = core.surface_geometry(C, n0, th2, 0, 0, 1, 1, 1, plane_axis=(0, 0, 1))
+    w2 = np.cross(g2["Vp"], g2["Sp"]); w2 = w2 / np.linalg.norm(w2)
+    assert abs(abs((E - C) @ w2) - abs((T2 - C) @ w2)) < 1.0, "minimaxで2点の面外ズレが均衡"
     # --- ice_image: 凸geom と r0=0(後方互換) の両方で描ける ---
     vol = np.full((40, 128, 128), -1000.0, np.float32); vol[:, 40:90, 40:90] = 40.0
     out = core.ice_image(vol, 0.7, 0.7, 1.0, g, 40, 400)

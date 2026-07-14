@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.57"                                            # 配布のたびに上げる
+VERSION = "0.4.58"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -1112,9 +1112,9 @@ class MainWindow(QMainWindow):
         self.footerLbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._reg(self.footerLbl,
                   "For research & education / Not a medical device / Not intra-procedural navigation"
-                  " / Final judgment is the physician's   ·  Made by M. Yamamoto  ",
+                  " / Final judgment is the physician's  ",
                   "研究・教育用 / 医療機器ではありません / 術中ナビゲーションではありません"
-                  " / 最終判断は術者   ·  Made by M. Yamamoto  ")
+                  " / 最終判断は術者  ")
         h.addWidget(self.footerLbl, 0, Qt.AlignRight | Qt.AlignVCenter)
         return bar
 
@@ -2596,7 +2596,7 @@ def main():
     QMessageBox.information(win, "TIPS ICE Planner — research / education tool",
         "Research, education and self-training only.\n\n"
         "· Not a certified medical device.\n· Not intra-procedural navigation.\n"
-        "· The operator makes all final clinical decisions.\n\nMade by M. Yamamoto.")
+        "· The operator makes all final clinical decisions.")
     win._check_updates(silent=True)             # 起動時に配布フォルダの新版を自動チェック（あればワンクリック更新を提案）
     win._maybe_show_tip_at_startup()            # 今日のヒント（VS Code風・チェックボックスでオフ可）
     sys.exit(app.exec())

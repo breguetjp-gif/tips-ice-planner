@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.2"                                            # 配布のたびに上げる
+VERSION = "0.5.3"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -2154,17 +2154,20 @@ class MainWindow(QMainWindow):
         nd = self._needle()                                  # 針(機構dict: カニューラ＋針)
         if nd is not None:
             self._draw_device(p, nd, lambda P: to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz)))
-        # IVC パス中心線（クリック点をz順に結ぶ線）＋点（赤リング）
-        if len(self.path) >= 2:
-            sp = sorted(self.path, key=lambda q: q[0])
-            line = [to_widget(*core.proj_mm([x * v.sx, y * v.sy, z * v.dz], v.sx, v.sy, v.dz, plane, nz))
-                    for (z, y, x) in sp]
-            ivc_alpha = 255 if self.step == 0 else 120            # Step1(IVCパス編集中)は濃く、Step2以降は薄く＝重なるICE扇を隠さない
-            p.setPen(QPen(QColor(95, 205, 235, ivc_alpha), 2)); p.setBrush(Qt.NoBrush); p.drawPolyline(QPolygonF(line))
-        p.setBrush(Qt.NoBrush); p.setPen(QPen(REDC, 2))
-        for (z, y, x) in self.path:
-            cc, rr = core.proj_mm([x * v.sx, y * v.sy, z * v.dz], v.sx, v.sy, v.dz, plane, nz)
-            p.drawEllipse(to_widget(cc, rr), 4, 4)
+        # IVC パス中心線（クリック点をz順に結ぶ線）＋点（赤リング）。
+        # 経腹モードではプローブは体表にあり、IVC の中を通るカテーテルの経路は関係が無い。3Dペインは
+        # 既に shaft=None で隠しているのに 2D だけ描き続けていて、画面が食い違っていた（先生指摘）。
+        if self.viewMode != "surface":
+            if len(self.path) >= 2:
+                sp = sorted(self.path, key=lambda q: q[0])
+                line = [to_widget(*core.proj_mm([x * v.sx, y * v.sy, z * v.dz], v.sx, v.sy, v.dz, plane, nz))
+                        for (z, y, x) in sp]
+                ivc_alpha = 255 if self.step == 0 else 120        # Step1(IVCパス編集中)は濃く、Step2以降は薄く＝重なるICE扇を隠さない
+                p.setPen(QPen(QColor(95, 205, 235, ivc_alpha), 2)); p.setBrush(Qt.NoBrush); p.drawPolyline(QPolygonF(line))
+            p.setBrush(Qt.NoBrush); p.setPen(QPen(REDC, 2))
+            for (z, y, x) in self.path:
+                cc, rr = core.proj_mm([x * v.sx, y * v.sy, z * v.dz], v.sx, v.sy, v.dz, plane, nz)
+                p.drawEllipse(to_widget(cc, rr), 4, 4)
         # Entry / Target（緑/赤・ラベル・ドラッグ可）。現在スライスが真の点と一致したら強調
         hits = []
         cur = (self.cz, self.cy, self.cx)[plane]

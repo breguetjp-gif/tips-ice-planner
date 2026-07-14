@@ -704,3 +704,57 @@ def test_no_stray_top_level_windows():
                            "lblProbe", "probeFoot", "probeHead", "lblAP", "lblLR")
                if getattr(win, n).parent() is None]
     assert not orphans, "親を持たないウィジェットが残っている（いつでも窓になり得る）: {}".format(orphans)
+
+
+def test_ivc_path_hidden_in_transabdominal_mode():
+    """経腹モードでは IVC を通るカテーテル経路を 2D 断面に描かないこと。
+
+    経腹ではプローブは体表にあり、IVC の中を通る経路は関係が無い。3Dペインは以前から
+    shaft=None で隠していたのに、2D（Axial/Coronal/Sagittal）だけ描き続けていて画面が
+    食い違っていた（先生指摘）。経路の有無で描画が変わらないことを確かめる。
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+    import dicom_io
+    import glob
+
+    files = sorted(glob.glob(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "sample_data", "HCC048_portal_venous", "*.dcm")))
+    if not files:
+        return                                   # 同梱CTが無いクローンではスキップ
+
+    win = M.MainWindow(); win.resize(1200, 800)
+    try:
+        win.current_study_uid = "t"; win._current_files = list(files)
+        win._on_series_loaded(dicom_io.load_series_files(files))
+        for _ in range(3):
+            app.processEvents()
+        win.show_liver = False                   # 肝抽出ワーカーを走らせない
+        path = [[9.0, 237.0, 244.0], [40.0, 255.0, 245.0], [75.0, 268.0, 247.0]]
+
+        def render(mode, p):
+            win.viewMode = mode; win.path = [list(q) for q in p]
+            win._update_mode_ui(); win._refresh()
+            for _ in range(3):
+                app.processEvents()
+            win.cor.grab().save("/tmp/_ivc_test.png")
+            from PIL import Image
+            return np.array(Image.open("/tmp/_ivc_test.png").convert("RGB"), dtype=int)
+
+        surf_with, surf_without = render("surface", path), render("surface", [])
+        assert surf_with.shape == surf_without.shape
+        assert int((np.abs(surf_with - surf_without) > 8).sum()) == 0, \
+            "経腹モードなのに IVC 経路が描かれている"
+
+        ice_with, ice_without = render("ice", path), render("ice", [])
+        assert ice_with.shape == ice_without.shape
+        assert int((np.abs(ice_with - ice_without) > 8).sum()) > 0, \
+            "血管内モードで IVC 経路が描かれていない（消しすぎ）"
+    finally:
+        win._stop_workers()

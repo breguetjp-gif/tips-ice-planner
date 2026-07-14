@@ -504,10 +504,6 @@ def run():
     btns1c = _restore_buttons(win.db, s1)
     assert not btns1c[3].isEnabled(), "restore button disabled after delete"
     import settings_store
-    # --- 操作スタイル Classic/Handle が JSON に永続化される（更新後も維持）---
-    win._set_control_style("classic"); assert settings_store.store().value("control_style") == "classic"
-    assert win.classicIce.isVisibleTo(win) or True   # classic時はスライダー行
-    win._set_control_style("handle"); assert settings_store.store().value("control_style") == "handle"
     # --- 挿入方向(既定)は施設固定の設定としてSettingsメニューに集約・永続化される ---
     win._set_insertion_default(False)
     assert settings_store.store().value("insertion_default") == "jugular" and win.tipHighZ is False
@@ -584,3 +580,38 @@ def test_quit_while_worker_running_does_not_abort(qtbot=None):
     assert r.returncode == 0, (
         f"quit-while-busy aborted (rc={r.returncode}; -6/134 = SIGABRT). "
         f"stderr tail: {r.stderr.decode()[-300:]}")
+
+
+def test_new_patient_always_starts_at_step0():
+    """先生報告の回帰テスト：前の患者でStep2(針)・Entry/Targetまで進めた状態のまま
+    別の(未保存の)患者を開くと、stepが1のまま持ち越され「2. 穿刺針」モードで開いてしまい、
+    IVCパスが無いためEntry/Target操作をしても画面に何も反映されず「ボタンが効かない」ように
+    見えていた。_set_volume は患者ごとに毎回呼ばれるので、ここでstep/ptModeもリセットする。"""
+    import dicom_io
+    import main as M
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    tmp = tempfile.mkdtemp(prefix="tips_test_step_")
+    dir_a = os.path.join(tmp, "a"); os.makedirs(dir_a)
+    dir_b = os.path.join(tmp, "b"); os.makedirs(dir_b)
+    su_a, se_a = generate_uid(), generate_uid()
+    su_b, se_b = generate_uid(), generate_uid()
+    for z in range(4):
+        _slice(os.path.join(dir_a, f"a{z}.dcm"), su_a, se_a, z, "PatientA", 1, name="A^Pat", pid="PA")
+    for z in range(4):
+        _slice(os.path.join(dir_b, f"b{z}.dcm"), su_b, se_b, z, "PatientB", 1, name="B^Pat", pid="PB")
+
+    win = M.MainWindow()
+    vol_a = dicom_io.load_series(dir_a)
+    win._set_volume(vol_a)
+    win._set_step(1)                                     # 患者Aで「2. 穿刺針」まで進める
+    win.entry = np.array([1.0, 1.0, 1.0]); win.target = np.array([2.0, 2.0, 2.0])
+    assert win.step == 1
+
+    vol_b = dicom_io.load_series(dir_b)                   # 患者B（未保存の新規患者）を開く
+    win._set_volume(vol_b)
+    assert win.step == 0, "新規患者はstep=0(1. ICEセットアップ)から始まるべき"
+    assert win.ptMode == 0
+    assert win.entry is None and win.target is None
+    assert not win.needleRowW.isVisible(), "Step1では針操作行は畳まれているべき"

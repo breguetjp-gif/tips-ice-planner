@@ -102,7 +102,7 @@
 <div class="fig">
   <img src="screenshots/en_fig1_database.png">
   <div class="cap">Figure 1 &mdash; Patient list. Select a row and click Open (or double-click a thumbnail).
-    The Comment column has been blacked out for this manual</div>
+    Shown here with a public TCIA dataset (CC BY 4.0)</div>
 </div>
 <ul>
   <li><b>Search</b>: filter studies by patient name, ID, <b>institution</b>, description or comment.</li>
@@ -143,9 +143,7 @@
     the 3D linkage panel on the right, with the control strip along the bottom</div>
 </div>
 <p>
-  The bottom strip offers two control styles: the default <b>Handle</b> mode, where you drag a
-  picture of the probe handle, and a <b>Classic</b> mode with numeric sliders (switch between them
-  under &ldquo;Settings &rarr; Control style&rdquo;).
+  The bottom strip uses <b>Handle</b> mode: you drag a picture of the probe handle to steer the ICE view.
 </p>
 <table class="keys">
   <tr><th>Control (Handle mode)</th><th>What it does</th></tr>
@@ -155,6 +153,7 @@
 </table>
 <table class="keys">
   <tr><th>Other controls</th><th>What it does</th></tr>
+  <tr><td><b>Zero deflect</b></td><td>Resets both A-P and L-R deflection to 0&deg; at once</td></tr>
   <tr><td><b>Roll / Roll 0</b></td><td>Freely rotates the ICE image itself for a more convenient view (does not change the underlying geometry) / resets it to 0&deg;</td></tr>
   <tr><td><b>Flip ICE L/R</b></td><td>Mirrors the ICE image left&ndash;right</td></tr>
   <tr><td><b>Liver / Liver: Haze &middot; Surface / Opacity</b></td><td>Overlays a translucent liver &ldquo;ghost&rdquo; to help judge position; toggle haze/surface style and adjust opacity</td></tr>
@@ -272,7 +271,7 @@
   <tr><th>Menu</th><th>Key items</th></tr>
   <tr><td><b>File</b></td><td>Patient list / Open DICOM</td></tr>
   <tr><td><b>Edit</b></td><td>Undo / Clear IVC path / Clear needle / Clear plots / Clear all</td></tr>
-  <tr><td><b>Settings</b></td><td>Control style (Classic / Handle) / Default insertion route / Switch language (English &harr; Japanese)</td></tr>
+  <tr><td><b>Settings</b></td><td>Default insertion route / Switch language (English &harr; Japanese)</td></tr>
   <tr><td><b>Help</b></td><td>User manual (PDF) / Tip of the day / FAQ / About / Check for updates / Send feedback / Support development</td></tr>
 </table>
 <p>
@@ -289,10 +288,10 @@
 <table class="keys">
   <tr><th>Action</th><th>Effect</th></tr>
   <tr><td>Pinch  /  <span class="kbd">&#8984;</span>+scroll</td><td>Zoom, centered on the cursor</td></tr>
-  <tr><td>Drag</td><td>Adjust window level / width (brightness &amp; contrast)</td></tr>
+  <tr><td>Left-drag</td><td>Adjust window level / width (brightness &amp; contrast)</td></tr>
   <tr><td>Right-drag / wheel</td><td>Zoom, centered on the cursor</td></tr>
-  <tr><td>Right-click</td><td>Reset zoom &amp; position</td></tr>
-  <tr><td><span class="kbd">&#8997; Option</span> / <span class="kbd">Space</span> + drag, or middle-drag</td><td>Pan the image</td></tr>
+  <tr><td>Right-click (click only, no drag)</td><td>Reset zoom &amp; position</td></tr>
+  <tr><td><span class="kbd">&#8997; Option</span> / <span class="kbd">Space</span> + drag, or press-and-drag the scroll wheel (middle-drag)</td><td>Pan the image</td></tr>
 </table>
 
 <div class="footer-disc">

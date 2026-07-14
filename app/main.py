@@ -27,7 +27,7 @@ from handle_control import HandleControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.50"                                            # 配布のたびに上げる
+VERSION = "0.4.52"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -749,7 +749,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         settings_store.migrate_from_qsettings()              # 旧QSettingsの値を一度だけ取り込む（更新後も設定維持）
         i18n.set_lang(settings_store.store().value("ui_lang", "en"))
-        self._control_style = settings_store.store().value("control_style", "handle")  # handle=ハンドル操作 / classic=スライダー
         self._i18n = []                                      # (widget/QAction, en, ja) — 言語切替で setText し直す
         self.setWindowTitle(f"TIPS ICE Planner  v{VERSION}  — research / education only")
         self.resize(1320, 920)
@@ -912,33 +911,29 @@ class MainWindow(QMainWindow):
         return self.needleRowW
 
     def _bottom_strip(self):
-        """画像直下の複合帯＝凡例(縦)/手順/エコー/Classic⇔Handle/ロール・肝臓/保存/クリアを1本に集約。
+        """画像直下の複合帯＝凡例(縦)/手順/エコー/Handle操作/ロール・肝臓/保存/クリアを1本に集約。
         患者リスト・DICOMを開く・言語・挿入方向は上部メニューバーへ移設済み（施設固定・毎回操作しないため）。
-        従来の複数行(Row1+ハンドル帯+ロール行)を1本の帯に統合し、縦方向を節約してCT/ICE表示を最大化。"""
+        従来の複数行(Row1+ハンドル帯+ロール行)を1本の帯に統合し、縦方向を節約してCT/ICE表示を最大化。
+        操作方式はHandle（絵をドラッグ）に一本化済み（旧Classic=スライダー表示は廃止・先生指示2026-07-14）。
+        ただしθ/偏向/プローブ位置のスライダー(sTheta/sB1/sB2/sProbe)自体は、Handle操作の値が実際に
+        流れ込む先＝状態の一次保持先として内部的に温存する（表示はしない・_restore_state等が直接参照するため）。"""
         strip = QWidget(); strip.setStyleSheet("background:#14253a;")
         h = QHBoxLayout(strip); h.setContentsMargins(8, 2, 8, 2); h.setSpacing(8)
         self.gbar = GestureBar(vertical=True)
         h.addWidget(self.gbar); h.addWidget(_sep())
         h.addWidget(self._step_group()); h.addWidget(self._echo_group()); h.addWidget(_sep())
-        # --- Classic: スライダー群（2行折返し・Handleと同じ場所に出す） ---
+        # --- 内部状態保持用ウィジェット（非表示。Handle操作の値の一次保持先／状態保存・復元・
+        #     経腹⇔血管内のラベル読み替え(_update_mode_ui)が直接参照するため温存） ---
         self.sTheta = self._slider(0, 360, int(self.theta), self._set_theta)
         self.sProbe = self._slider(0, 100, 50, self._set_probe); self.sProbe.setEnabled(False)
         self.sB1 = self._slider(-80, 80, 0, self._set_b1); self.sB2 = self._slider(-80, 80, 0, self._set_b2)
-        self.classicIce = QWidget(); cv = QVBoxLayout(self.classicIce)
-        cv.setContentsMargins(0, 0, 0, 0); cv.setSpacing(2); cv.addStretch(1)
-        c1 = QHBoxLayout(); c1.setSpacing(6)
-        self.lblTheta = self._acc("Rotate θ"); c1.addWidget(self.lblTheta); c1.addWidget(self.sTheta)
+        self.b1Val = QLabel("+0°"); self.b2Val = QLabel("+0°")   # _refresh()が更新（Handle上の度数表示は別描画）
+        self.lblTheta = self._acc("Rotate θ")
         self.lblProbe = self._acc("Probe", ja="プローブ前後")
         self.probeFoot = self._lbl("foot", "足側"); self.probeHead = self._lbl("head", "頭側")
-        c1.addWidget(self.lblProbe); c1.addWidget(self.probeFoot); c1.addWidget(self.sProbe); c1.addWidget(self.probeHead)
-        c1.addStretch(1); cv.addLayout(c1)
-        c2 = QHBoxLayout(); c2.setSpacing(6)
-        self.lblAP = self._acc("Deflect A/P"); c2.addWidget(self.lblAP); c2.addWidget(self.sB1); self.b1Val = QLabel("+0°"); c2.addWidget(self.b1Val)
-        self.lblLR = self._acc("Deflect L/R"); c2.addWidget(self.lblLR); c2.addWidget(self.sB2); self.b2Val = QLabel("+0°"); c2.addWidget(self.b2Val)
-        c2.addWidget(self._btn("Zero deflect", self._zero_defl, ja="偏向ゼロ")); c2.addStretch(1)
-        cv.addLayout(c2); cv.addStretch(1)
-        h.addWidget(self.classicIce, 1)
-        h.addWidget(self.handleCtl, 1)                       # Handle（絵をドラッグ）＝Classicと同じ位置に表示切替
+        self.lblAP = self._acc("Deflect A/P"); self.lblLR = self._acc("Deflect L/R")
+        h.addWidget(self.handleCtl, 2)
+        h.addWidget(self._btn("Zero deflect", self._zero_defl, ja="偏向ゼロ"))
         h.addWidget(_sep())
         # --- 右ブロック: ロール／反転＋肝臓ゴースト（2行・常時表示） ---
         rl = QWidget(); g = QVBoxLayout(rl); g.setContentsMargins(0, 0, 0, 0); g.setSpacing(2); g.addStretch(1)
@@ -957,7 +952,6 @@ class MainWindow(QMainWindow):
         g.addLayout(rw2); g.addStretch(1)
         h.addWidget(rl); h.addWidget(_sep())
         h.addWidget(self._undo_group()); h.addWidget(self._save_group()); h.addWidget(self._clear_group())
-        self._apply_control_style()
         return strip
 
     def _step_group(self):
@@ -979,21 +973,6 @@ class MainWindow(QMainWindow):
         for b in (self.iceBtn, self.surfBtn):
             b.setMaximumHeight(20); v.addWidget(b)
         return box
-
-    # ---------- Classic(スライダー) / Active(ハンドル) 切替 ----------
-    def _apply_control_style(self):
-        handle = (self._control_style != "classic")           # classic以外はHandle（旧"active"値も吸収）
-        self.handleCtl.setVisible(handle)
-        self.classicIce.setVisible(not handle)
-        if handle:
-            self._sync_handle()
-
-    def _set_control_style(self, style):
-        self._control_style = style
-        settings_store.store().setValue("control_style", style)   # 更新後も維持
-        self._apply_control_style()
-        if hasattr(self, "actClassic"):
-            self.actClassic.setChecked(style == "classic"); self.actHandle.setChecked(style != "classic")
 
     def _sync_handle(self):
         """現在の θ/b1/b2/probe をハンドルの絵へ反映（スライダー操作や状態復元と同期）。"""
@@ -1140,18 +1119,8 @@ class MainWindow(QMainWindow):
         self._reg(em.addAction("", self._clear_plots), "Clear plots", "プロットを消去")
         em.addSeparator()
         self._reg(em.addAction("", self._clear_all), "Clear all", "すべて消去")
-        # Settings：操作スタイル（Classic=スライダー / Active=ハンドル操作）＋言語
+        # Settings：言語（操作スタイルはHandle操作のみに統合済み・Classicモードは廃止）
         sm = mb.addMenu("Settings"); self._reg(sm.menuAction(), "Settings", "設定")
-        csm = sm.addMenu(""); self._reg(csm.menuAction(), "Control style", "操作スタイル")
-        self.actClassic = csm.addAction(""); self.actClassic.setCheckable(True)
-        self._reg(self.actClassic, "Classic (sliders)", "Classic（スライダー）")
-        self.actClassic.triggered.connect(lambda: self._set_control_style("classic"))
-        self.actHandle = csm.addAction(""); self.actHandle.setCheckable(True)
-        self._reg(self.actHandle, "Handle (drag the picture)", "Handle（ハンドルの絵をドラッグ）")
-        self.actHandle.triggered.connect(lambda: self._set_control_style("handle"))
-        self.actClassic.setChecked(self._control_style == "classic")
-        self.actHandle.setChecked(self._control_style != "classic")
-        sm.addSeparator()
         # 挿入方向（大腿/頸静脈）は施設ごとにほぼ固定なので既定値として設定に集約（患者ごとの上書きも可）
         ism = sm.addMenu(""); self._reg(ism.menuAction(), "Default insertion route", "既定の挿入方向")
         self.actInsFem = ism.addAction(""); self.actInsFem.setCheckable(True)
@@ -1557,9 +1526,11 @@ class MainWindow(QMainWindow):
         self.contact = None; self.normal = None              # 経腹プローブ接触点も患者ごとにリセット
         self.liver = None; self._liver_key = None; self.p3d.liver = None
         self.body = None; self._body_key = None; self.p3d.body = None
+        self.step = 0; self.ptMode = 0                       # 新規患者は必ず「1. ICEセットアップ」から
         note = vol.meta.get("note", "")
         self.statusBar().showMessage(
             f"Loaded {nz}×{H}×{W}  spacing {vol.sx:.2f}/{vol.sy:.2f}/{vol.dz:.2f} mm" + (f"   ⚠ {note}" if note else ""), 12000)
+        self._update_step_ui()
         self._refresh()
         self._compute_body()                                 # 読込時に体表シェルを背景抽出
         self._update_save_buttons()                          # 患者が変わったので保存スロットの表示も更新
@@ -2136,7 +2107,8 @@ class MainWindow(QMainWindow):
             sp = sorted(self.path, key=lambda q: q[0])
             line = [to_widget(*core.proj_mm([x * v.sx, y * v.sy, z * v.dz], v.sx, v.sy, v.dz, plane, nz))
                     for (z, y, x) in sp]
-            p.setPen(QPen(QColor(95, 205, 235), 2)); p.setBrush(Qt.NoBrush); p.drawPolyline(QPolygonF(line))
+            ivc_alpha = 255 if self.step == 0 else 120            # Step1(IVCパス編集中)は濃く、Step2以降は薄く＝重なるICE扇を隠さない
+            p.setPen(QPen(QColor(95, 205, 235, ivc_alpha), 2)); p.setBrush(Qt.NoBrush); p.drawPolyline(QPolygonF(line))
         p.setBrush(Qt.NoBrush); p.setPen(QPen(REDC, 2))
         for (z, y, x) in self.path:
             cc, rr = core.proj_mm([x * v.sx, y * v.sy, z * v.dz], v.sx, v.sy, v.dz, plane, nz)
@@ -2223,11 +2195,17 @@ class MainWindow(QMainWindow):
         def to_pt(P):
             return to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz))
         if b.get("shaft") is not None and len(b["shaft"]) >= 2:
-            p.setPen(QPen(QColor(204, 217, 230, 150), 4)); p.setBrush(Qt.NoBrush)
-            p.drawPolyline(QPolygonF([to_pt(P) for P in b["shaft"]]))
+            pts = QPolygonF([to_pt(P) for P in b["shaft"]])
+            p.setPen(QPen(QColor(20, 26, 36, 170), 10)); p.setBrush(Qt.NoBrush)   # 濃色の縁取りで浮かせる
+            p.drawPolyline(pts)
+            p.setPen(QPen(QColor(220, 232, 242, 235), 6)); p.setBrush(Qt.NoBrush)
+            p.drawPolyline(pts)
         if b.get("orange") is not None and len(b["orange"]) >= 2:
-            p.setPen(QPen(QColor(245, 140, 50, 150), 5)); p.setBrush(Qt.NoBrush)
-            p.drawPolyline(QPolygonF([to_pt(P) for P in b["orange"]]))
+            pts = QPolygonF([to_pt(P) for P in b["orange"]])
+            p.setPen(QPen(QColor(20, 26, 36, 170), 11)); p.setBrush(Qt.NoBrush)
+            p.drawPolyline(pts)
+            p.setPen(QPen(QColor(255, 150, 55, 235), 7)); p.setBrush(Qt.NoBrush)
+            p.drawPolyline(pts)
 
     # ---------- オーバーレイ（ICE） ----------
     def _ice_overlay(self, p, to_widget):
@@ -2470,7 +2448,7 @@ class MainWindow(QMainWindow):
                                    needle=(nh["full"] if nh else None), cannula=None,
                                    probe_outline=pg["outline"], probe_face=pg["face"],
                                    entry=self.entry, target=self.target, liver=self.liver,
-                                   aim_outline=aim_outline, aim_pred=aim_pred))
+                                   aim_outline=aim_outline, aim_pred=aim_pred, aim_tip=self.aim_tip))
             return
         b = core.bend_tip(self.path, self.zP, self.theta, self.b1, self.b2, v.sx, v.sy, v.dz, tip_high_z=self.tipHighZ)
         Tp = b["Tp"]; t1 = b["t1"]; Vp = g["Vp"]; Sp = g["Sp"]; R = g["R"]; fh = g["fan_half"]
@@ -2487,7 +2465,7 @@ class MainWindow(QMainWindow):
                                fan=fan, apex=amid, needle=None,          # 旧・単純点線→金属針アセンブリに置換
                                cannula=(nh.get("cannula") if nh else None),
                                entry=self.entry, target=self.target, liver=self.liver,
-                               aim_outline=aim_outline, aim_pred=aim_pred, **metal))
+                               aim_outline=aim_outline, aim_pred=aim_pred, aim_tip=self.aim_tip, **metal))
 
 
 def path_from_open_event(qurl, qfile):

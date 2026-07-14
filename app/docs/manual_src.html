@@ -97,7 +97,7 @@
 </p>
 <div class="fig">
   <img src="screenshots/ja_fig1_database.png">
-  <div class="cap">図1　患者リスト画面。行を選んで「開く」（またはサムネイルをダブルクリック）。Comment欄は本書用に黒塗りしています</div>
+  <div class="cap">図1　患者リスト画面。行を選んで「開く」（またはサムネイルをダブルクリック）。図はTCIA公開データセット(CC BY 4.0)で撮影しています</div>
 </div>
 <ul>
   <li><b>検索</b>：患者名・ID・<b>施設名</b>・説明・コメントで検査を絞り込みます。</li>
@@ -132,8 +132,7 @@
     下部に操作帯がまとまっている</div>
 </div>
 <p>
-  下部の操作帯には、絵をドラッグしてICEを操作する<b>ハンドル操作</b>（既定）と、
-  数値スライダーで操作する<b>Classic</b>モードがあります（切替は「Settings ▸ Control style」）。
+  下部の操作帯では、絵（プローブの手元）をドラッグしてICEを操作する<b>ハンドル操作</b>を使います。
 </p>
 <table class="keys">
   <tr><th>操作（ハンドル操作モード）</th><th>できること</th></tr>
@@ -143,6 +142,7 @@
 </table>
 <table class="keys">
   <tr><th>その他の操作</th><th>できること</th></tr>
+  <tr><td><b>偏向ゼロ</b></td><td>A-P・L-R の偏向を一度に0度へ戻す</td></tr>
   <tr><td><b>ロール／ロール0</b></td><td>ICE画像そのものを任意角度で回して見やすく表示（幾何には影響しません）／0度に戻す</td></tr>
   <tr><td><b>ICE左右反転</b></td><td>ICE画像を左右反転して表示</td></tr>
   <tr><td><b>肝臓 ／ 肝臓: もや・表面 ／ 不透明度</b></td><td>肝臓の輪郭を半透明の「ゴースト」として重ねて位置関係を把握。もや/表面表示の切替と不透明度調整</td></tr>
@@ -249,7 +249,7 @@
   <tr><th>メニュー</th><th>主な項目</th></tr>
   <tr><td><b>File</b></td><td>患者リスト／DICOMを開く</td></tr>
   <tr><td><b>Edit</b></td><td>元に戻す／IVCパスを消去／針を消去／プロットを消去／すべて消去</td></tr>
-  <tr><td><b>Settings</b></td><td>操作スタイル（Classic／Handle）／既定の挿入方向／表示言語の切替（英語⇄日本語）</td></tr>
+  <tr><td><b>Settings</b></td><td>既定の挿入方向／表示言語の切替（英語⇄日本語）</td></tr>
   <tr><td><b>Help</b></td><td>使い方説明書（PDF）／今日のヒント／FAQ／このアプリについて／アップデート確認／
       フィードバック送信／開発を支援</td></tr>
 </table>
@@ -266,10 +266,10 @@
 <table class="keys">
   <tr><th>操作</th><th>できること</th></tr>
   <tr><td>ピンチ　／　<span class="kbd">⌘</span>+スクロール</td><td>拡大縮小（カーソル位置が中心）</td></tr>
-  <tr><td>ドラッグ</td><td>階調（明るさ・コントラスト）の調整</td></tr>
+  <tr><td>左ドラッグ</td><td>階調（明るさ・コントラスト）の調整</td></tr>
   <tr><td>右ドラッグ／ホイール</td><td>拡大縮小（カーソル位置が中心）</td></tr>
-  <tr><td>右クリック</td><td>拡大・位置をリセット</td></tr>
-  <tr><td><span class="kbd">⌥ Option</span>／<span class="kbd">Space</span> + ドラッグ、または中ドラッグ</td><td>画像の移動（パン）</td></tr>
+  <tr><td>右クリック（ドラッグせずクリックのみ）</td><td>拡大・位置をリセット</td></tr>
+  <tr><td><span class="kbd">⌥ Option</span>／<span class="kbd">Space</span> + ドラッグ、またはホイールを押し込んだままドラッグ（中ドラッグ）</td><td>画像の移動（パン）</td></tr>
 </table>
 
 <div class="footer-disc">

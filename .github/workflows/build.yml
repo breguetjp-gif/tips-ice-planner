@@ -1,20 +1,32 @@
 name: build-apps
 # Windows版のビルドのみCIで行う（Mac版は署名・公証が要るため常にローカルの build_release.command で作成）。
-# 成果物は Actions artifact ではなく GitHub Release(タグ windows-build を毎回上書き)で受け渡す。
-# 理由: Actions artifact はアカウント単位の保存容量クォータ(private repoは0.5GB)を共有しており、
-# retention-days短縮後も繰り返しビルドするとすぐ再度枯渇した（先生報告「Windowsの自動更新が機能しない」の
-# 調査で、実際に2026-06-14以降Windows版CIが一度も成功していなかったと判明）。Release assetはこのクォータ対象外。
+#
+# 成果物は Actions artifact ではなく **そのタグ自身のリリース** に添付して受け渡す。
+#   · Actions artifact はアカウント単位の保存容量クォータ(0.5GB)を共有していて、繰り返しビルドすると
+#     すぐ枯渇した（2026-06-14以降Windows版CIが一度も成功していなかった原因）。Release asset は対象外。
+#   · 以前は `windows-build` という毎回上書きのローリング・リリースに上げていた。これはやめた:
+#     Zenodo は **リリースが作られるたび** にリポジトリを丸ごとアーカイブして版を切る。ローリング・リリースが
+#     一度でも作られると、それが「最新版」として concept DOI を奪い、論文の引用先が
+#     「タグ付きリリース」ではなく「上書き中のWindowsビルド」を指してしまう（実際に起きた）。
+#   · タグ付きリリースへの添付なら Zenodo は発火しない（`--clobber` は release:edited であって published ではない）。
+#     exe とソースが同じ版で対応するので、再現性の面でも正しい。
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "添付先のリリースタグ（例: v0.5.0）"
+        required: true
   push:
     tags: ['v*']
 permissions:
-  contents: write   # gh release create/upload に必要
+  contents: write   # gh release upload に必要
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -31,17 +43,12 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path "dist/TIPS ICE Planner" -DestinationPath "dist/TIPS-ICE-Planner-Windows.zip" -Force
-      - name: Publish to rolling release (avoids Actions artifact storage quota)
+      - name: Attach the build to its own tagged release
         working-directory: app
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          if gh release view windows-build >/dev/null 2>&1; then
-            gh release upload windows-build "dist/TIPS-ICE-Planner-Windows.zip" --clobber
-          else
-            gh release create windows-build "dist/TIPS-ICE-Planner-Windows.zip" \
-              --title "Windows build (rolling, latest)" \
-              --notes "Latest Windows CI build off main. This release is overwritten on every build.yml run; not a versioned release." \
-              --prerelease
-          fi
+          gh release upload "$TAG" "dist/TIPS-ICE-Planner-Windows.zip" --clobber
+          echo "attached TIPS-ICE-Planner-Windows.zip to $TAG"

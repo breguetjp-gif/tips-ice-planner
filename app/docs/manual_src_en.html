@@ -70,6 +70,17 @@
     margin-top: 10mm; padding: 4mm 5mm; background: #fbf3e8; border-left: 3px solid #d99a5b;
     color: #6b4a24; font-size: 9.5pt;
   }
+
+  /* --- ページ送りの制御 ---
+     章見出しは <h1 class="section">。自動改ページ任せだと、表紙の下端に第1章の見出しが
+     取り残されていた。章を毎回強制改頁すると半端な空白ページが増えるので、
+     「表紙は1ページ占有」と「見出しをページ末に置き去りにしない」の2点だけを効かせる。 */
+  .cover { break-after: page; page-break-after: always; }
+  h1.section { break-after: avoid; page-break-after: avoid; }   /* 見出しの直後で切らない */
+  h1.section + p, h1.section + ol, h1.section + ul { break-before: avoid; page-break-before: avoid; }
+  figure, .fig { break-inside: avoid; page-break-inside: avoid; }
+  .cap { break-before: avoid; page-break-before: avoid; }        /* 図と説明文を引き離さない */
+  table.keys, .note { break-inside: avoid; page-break-inside: avoid; }
 </style>
 </head>
 <body>

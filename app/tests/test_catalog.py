@@ -1055,3 +1055,91 @@ def test_three_point_lock_mode():
         print("✅ three-point lock ok")
     finally:
         win._stop_workers()
+
+
+def test_actual_tip_button_can_remove_the_needle():
+    """「Actual tip」をもう一度押したら、置いた実際の針が消えること（先生報告 2026-07-15）。
+
+    以前は OFF にしても入力モードを抜けるだけで針が残り、しかも針だけを消す手段が無かった
+    （Clear ▸ Needle は Entry/Target ごと消える）。＝一度置いたら二度と消せなかった。
+    あわせて、ボタンの見た目と実際の入力モードが食い違わないことも確かめる（復元後、押された
+    見た目なのに ICE をクリックしても針が動かない、という状態になっていた）。
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+    import dicom_io
+    import glob
+
+    files = sorted(glob.glob(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "sample_data", "HCC048_portal_venous", "*.dcm")))
+    if not files:
+        return
+
+    win = M.MainWindow(); win.resize(1400, 900)
+    try:
+        win.current_study_uid = "t"; win._current_files = list(files)
+        win._on_series_loaded(dicom_io.load_series_files(files))
+        for _ in range(3):
+            app.processEvents()
+        win.show_liver = False
+        win.viewMode = "ice"; win._update_mode_ui()
+        win.path = [[19.0, 246.0, 240.0], [40.0, 256.0, 245.0], [60.0, 264.0, 248.0], [76.0, 270.0, 250.0]]
+        win.zP, win.theta, win.b1, win.b2 = 48.0, 183.0, -26.0, 14.0
+        win.entry = np.array([252.0, 176.0, 168.0])
+        win.target = np.array([214.0, 190.0, 128.0])
+        win.step = 1
+        win._refresh()
+        for _ in range(2):
+            app.processEvents()
+
+        def sag_pixels():
+            win.sag.grab().save("/tmp/_aim_test.png")
+            from PIL import Image
+            return np.array(Image.open("/tmp/_aim_test.png").convert("RGB"), dtype=int)
+
+        base = sag_pixels()
+
+        # --- 1回目: ON にして ICE をクリック → 針が置かれ、画面に出る
+        win.aimBtn.setChecked(True); win._toggle_aim()
+        assert win.aimMode is True, "ON にしたのに入力モードが立っていない"
+        win.aim_tip = np.array([232.0, 184.0, 150.0])          # ICEクリック相当
+        win._refresh()
+        for _ in range(2):
+            app.processEvents()
+        drawn = sag_pixels()
+        assert int((np.abs(drawn - base) > 12).sum()) > 300, "実際の針が描かれていない（前提が崩れた）"
+
+        # --- 2回目: もう一度押す → 針が消え、画面から居なくなる
+        win.aimBtn.setChecked(False); win._toggle_aim()
+        assert win.aim_tip is None, "もう一度押しても実際の針が消えない"
+        assert win.aimMode is False and win.aim_torque == 0.0
+        for _ in range(2):
+            app.processEvents()
+        after = sag_pixels()
+        assert int((np.abs(after - base) > 12).sum()) == 0, "内部では消えたのに画面に針が残っている"
+
+        # Entry/Target は巻き添えにしない（Clear ▸ Needle との違い）
+        assert win.entry is not None and win.target is not None, "実際の針を消したら Entry/Target まで消えた"
+
+        # ⌘Z で戻せる
+        win._undo()
+        assert win.aim_tip is not None, "消した実際の針を Undo で戻せない"
+
+        # --- 復元後、ボタンの見た目と入力モードが一致していること
+        st = win._capture_state()
+        win.aim_tip = None; win.aimMode = False; win.aimBtn.setChecked(False)
+        win._restore_state(st)
+        for _ in range(2):
+            app.processEvents()
+        assert win.aim_tip is not None
+        assert win.aimBtn.isChecked() == win.aimMode is True, \
+            "ボタンは押された見た目なのに入力モードが立っていない（クリックしても針が動かない）"
+        print("✅ actual tip button toggles the needle off")
+    finally:
+        win._stop_workers()

@@ -15,7 +15,7 @@ authors:
     given-names: Masayoshi
     affiliation: "Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
     email: yamamoto.masayoshi.jx@teikyo-u.ac.jp
-version: "0.5.6"
+version: "0.5.7"
 # Zenodo の DOI はここに書かないこと。Zenodo は GitHub リリースを取り込むとき CITATION.cff を読み、
 # ここに書かれた DOI を新しい版レコードのDOIとして使おうとする。concept DOI は版レコードには
 # 割り当てられないので衝突し、取り込みが黙って失敗する（v0.5.0 の初回リリースで実際に起きた）。

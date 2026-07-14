@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.6"                                            # 配布のたびに上げる
+VERSION = "0.5.7"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -1802,7 +1802,11 @@ class MainWindow(QMainWindow):
         self.sLiverOp.blockSignals(True); self.sLiverOp.setValue(int(self.liver_opacity * 100)); self.sLiverOp.blockSignals(False)
         self._update_liver_btn()
         self.iceBtn.setChecked(self.viewMode == "ice"); self.surfBtn.setChecked(self.viewMode == "surface")
-        self.aimBtn.setChecked(self.aim_tip is not None); self.hubWidget.set_torque(self.aim_torque)
+        # ボタンの見た目と実際の入力モードは必ず一致させる。以前は checked だけを針の有無から
+        # 決めていて aimMode は False のままだったので、**押された見た目なのに ICE をクリックしても
+        # 針が動かない**という食い違いが起きていた。
+        self.aimMode = self.aim_tip is not None
+        self.aimBtn.setChecked(self.aimMode); self.hubWidget.set_torque(self.aim_torque)
         self.liver = None; self._liver_key = None; self.p3d.liver = None      # 復元後に幾何から再計算させる
         self.body = None; self._body_key = None; self.p3d.body = None
         self._restore_view(st.get("view"))                    # CT の拡大率・表示位置・スライス・窓値・3D視点
@@ -2193,8 +2197,20 @@ class MainWindow(QMainWindow):
     def _set_ptmode(self, m): self.ptMode = m; self._update_step_ui()
 
     def _toggle_aim(self):
-        """『実際の針先』モード：ONの間、ICEクリックはEntry/Targetでなくaim_tipを更新する。"""
-        self.aimMode = self.aimBtn.isChecked(); self._refresh_toggles()
+        """『実際の針先』ボタン。ONの間、ICEクリックは Entry/Target でなく aim_tip を更新する。
+        **OFF にしたら、置いた針そのものを消す。**
+
+        以前は OFF にしても「入力モードを抜ける」だけで、描いた針は残り続けた。しかも針だけを
+        消す手段がどこにも無く（Clear ▸ Needle は Entry/Target ごと消える）、一度置いたら
+        二度と消せなかった（先生報告 2026-07-15）。再描画すら呼んでいなかった。
+        消す前に Undo を積むので、間違えて消しても ⌘Z で戻せる。"""
+        on = self.aimBtn.isChecked()
+        if not on and self.aim_tip is not None:
+            self._snap_undo()                                # 消す前に1手だけ戻せるようにする
+            self.aim_tip = None; self.aim_torque = 0.0
+            self.hubWidget.set_torque(0.0)
+        self.aimMode = on
+        self._refresh_toggles(); self._refresh()
 
     def _nudge_torque(self, deg):
         """手元でカニューラを右/左に回した想定角度を進める。予測点線(2cm)の曲がる向きに反映。"""

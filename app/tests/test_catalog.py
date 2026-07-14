@@ -944,3 +944,114 @@ def test_cross_handle_resizes_all_four_panes():
     assert q.bot.sizes() == q.top.sizes(), "上段を動かしたのに下段が追従していない"
     q.close()
     print("✅ cross handle resizes all four panes at once")
+
+
+def test_three_point_lock_mode():
+    """3点固定モード（先生指示 2026-07-15）:
+      ・スイッチは ICE のモック（AcuNav ハンドル）の直下にあること
+      ・ON にすると θ が自動で解かれ、Entry と Target が ICE 画像面に乗ること
+      ・ON の間は θ を手で回せないこと（回せると直後に上書きされ「壊れている」と見える）
+      ・押し引きを動かすと θ が追い、偏向を動かしても θ が追うこと
+      ・OFF に戻せば θ はまた手で回せること
+      ・保存した状態に ON/OFF が残ること
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+    import dicom_io
+    import glob
+
+    files = sorted(glob.glob(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "sample_data", "HCC048_portal_venous", "*.dcm")))
+    if not files:
+        return
+
+    win = M.MainWindow(); win.resize(1400, 900)
+    try:
+        win.current_study_uid = "t"; win._current_files = list(files)
+        win._on_series_loaded(dicom_io.load_series_files(files))
+        for _ in range(3):
+            app.processEvents()
+        win.show_liver = False
+
+        # スイッチが ICE のモックの直下にあること（＝ハンドルと同じ入れ物の中、モックより下の行）
+        box = win.lock3Btn.parentWidget()
+        assert box is win.handleBox and win.handleCtl.parentWidget() is win.handleBox, \
+            "3点固定スイッチが ICE モックと同じ入れ物に入っていない"
+        assert win.handleBox.layout().indexOf(win.lock3Btn) > win.handleBox.layout().indexOf(win.handleCtl), \
+            "3点固定スイッチが ICE モックの下に置かれていない"
+
+        win.viewMode = "ice"; win._update_mode_ui()
+        win.path = [[19.0, 246.0, 240.0], [40.0, 256.0, 245.0], [60.0, 264.0, 248.0], [76.0, 270.0, 250.0]]
+        win.zP, win.b1, win.b2 = 48.0, -26.0, 14.0
+
+        # 答えが分かっている配置: θ0 の画像面の上に Entry と Target を置く
+        th0 = 137.0
+        g0 = M.core.ice_geometry(win.path, win.zP, th0, win.b1, win.b2,
+                                 win.vol.sx, win.vol.sy, win.vol.dz, tip_high_z=win.tipHighZ)
+        Tp = np.asarray(g0["Tp"], float)
+        Vp = M.core.nrm(g0["Vp"]); Sp = M.core.nrm(g0["Sp"])
+        win.entry = Tp + 30.0 * Vp + 12.0 * Sp
+        win.target = Tp + 58.0 * Vp - 9.0 * Sp
+        win.theta = 20.0                                      # わざと外した状態から始める
+        win._refresh()
+        assert abs(win.theta - 20.0) < 1e-6, "OFF なのに θ が勝手に動いた"
+
+        # --- ON: θ が自動で θ0 に解かれる
+        win.lock3Btn.setChecked(True); win._toggle_lock3()
+        assert win.lock3 and "ON" in win.lock3Btn.text()
+        d = abs(((win.theta - th0 + 180.0) % 360.0) - 180.0)
+        assert d < 1.0, f"ON にしても θ が解かれていない (θ={win.theta:.1f}°, 正解 {th0}°)"
+        assert win._lock3 is not None and win._lock3["resid"] < 0.5, "3点が画像面に乗っていない"
+        assert "3" in win.iceInfo.text() and "mm" in win.iceInfo.text(), "残差が画面に出ていない"
+
+        # --- ON の間は θ を手で回せない。しかも「回してから解き直して戻す」のではなく、
+        #     入口で受け付けない（受け付けると、ホイールを回すたびに毎回まるごと描き直す
+        #     ＝1ノッチごとに数十msの無駄。しかも θ が一瞬ずれて戻るのでガタつく）。
+        locked = win.theta
+        calls = [0]
+        real_refresh = win._refresh
+        win._refresh = lambda *a, **k: (calls.__setitem__(0, calls[0] + 1), real_refresh(*a, **k))[1]
+        win._spin_theta(+3)
+        assert abs(win.theta - locked) < 1e-6, "3点固定中なのにホイールで θ が回った"
+        win._set_theta(77.0)
+        assert abs(win.theta - locked) < 1e-6, "3点固定中なのにスライダで θ が変わった"
+        assert calls[0] == 0, f"3点固定中の θ 操作を入口で捨てていない（{calls[0]} 回も描き直した）"
+        win._refresh = real_refresh
+
+        # --- 押し引きを動かすと θ が追い、乗り続ける
+        win.zP = 62.0; win._refresh()
+        assert abs(((win.theta - locked + 180.0) % 360.0) - 180.0) > 0.5, "押し引きしても θ が追従しない"
+        th_pull = win.theta
+        # --- A/P偏向は画像面「内」で扇が振れる設計なので、面そのものは変わらない＝θは動かないのが正しい。
+        #     ここが動いてしまうと、A/Pつまみを回すたびに画面がぐるぐる回って使い物にならない。
+        win.b1 = -10.0; win._refresh()
+        assert abs(((win.theta - th_pull + 180.0) % 360.0) - 180.0) < 0.6, \
+            "A/P偏向は画像面内の動きなのに θ が動いた（面の向きが変わってしまっている）"
+        # --- L/R偏向は画像面と直交方向に振れる＝面が傾くので θ が追う
+        win.b2 = -20.0; win._refresh()
+        assert abs(((win.theta - th_pull + 180.0) % 360.0) - 180.0) > 0.5, "L/R偏向しても θ が追従しない"
+
+        # 報告している残差が、その θ での実測と一致する（数字をごまかしていない）
+        g = M.core.ice_geometry(win.path, win.zP, win.theta, win.b1, win.b2,
+                                win.vol.sx, win.vol.sy, win.vol.dz, tip_high_z=win.tipHighZ)
+        n = np.cross(M.core.nrm(g["Vp"]), M.core.nrm(g["Sp"])); n /= np.linalg.norm(n)
+        Tp = np.asarray(g["Tp"], float)
+        oe = float((win.entry - Tp) @ n); ot = float((win.target - Tp) @ n)
+        assert abs(oe - win._lock3["off_entry"]) < 1e-6 and abs(ot - win._lock3["off_target"]) < 1e-6, \
+            "画面に出している面外ズレが実際の幾何と食い違っている"
+
+        # --- 保存に残る / OFF に戻せば θ はまた手で回せる
+        assert win._capture_state().get("lock3") is True, "3点固定モードが保存されていない"
+        win.lock3Btn.setChecked(False); win._toggle_lock3()
+        assert not win.lock3 and "OFF" in win.lock3Btn.text() and win._lock3 is None
+        win._set_theta(77.0)
+        assert abs(win.theta - 77.0) < 1e-6, "OFF に戻したのに θ を手で回せない"
+        print("✅ three-point lock ok")
+    finally:
+        win._stop_workers()

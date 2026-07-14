@@ -614,3 +614,63 @@ def test_ice_shaft_reaches_tips_length():
     assert abs(length(lp["shaft"]) - length(lp0["shaft"])) < 1e-6, \
         "既に90mmを超えているのに、さらに伸ばしている"
     print("✅ ICE shaft %.1fmm → %.1fmm (TIPS外筒=90mm)" % (length(stub["shaft"]), length(full["shaft"])))
+
+
+def test_solve_theta_3points():
+    """3点固定モードの中身: ICE先端・Entry・Target が同一の画像面に乗る θ を、真の幾何で解けること。
+
+    ice_coplanarity() は頂点 Tp と接線 Sp を固定してビーム Vp だけ回す近似で、偏向をかけていると
+    θ が曲げの向きそのものを変えるため Tp も t1 も動く。近似のままだと「言われたとおり θ を回したのに
+    合わない」ことが起きる。ここは候補 θ ごとに ice_geometry を作り直して評価する。
+
+    試し方: **答えが分かっている問題を作る**。ある θ0 の画像面を実際に計算し、その面の上に
+    Entry と Target を置く。解けるはずの問題なので、ソルバは残差ほぼゼロで θ0 を取り戻せなければ嘘。
+    """
+    from tips_core import geometry as G
+    sx = sy = 0.703125; dz = 2.5
+    path = [[19.0, 246.0, 240.0], [40.0, 256.0, 245.0], [60.0, 264.0, 248.0], [76.0, 270.0, 250.0]]
+    zP, b1, b2 = 48.0, -26.0, 14.0                            # 偏向あり＝θが先端位置Tpも動かす条件
+
+    def off(th, E, T):
+        g = G.ice_geometry(path, zP, th, b1, b2, sx, sy, dz)
+        n = np.cross(G.nrm(g["Vp"]), G.nrm(g["Sp"])); n /= np.linalg.norm(n)
+        Tp = np.asarray(g["Tp"], float)
+        return abs(float((E - Tp) @ n)), abs(float((T - Tp) @ n))
+
+    # --- 答えが分かっている問題: θ0 の画像面の「上」に Entry と Target を置く
+    th0 = 137.0
+    g0 = G.ice_geometry(path, zP, th0, b1, b2, sx, sy, dz)
+    Tp0, Vp0, Sp0 = np.asarray(g0["Tp"], float), G.nrm(g0["Vp"]), G.nrm(g0["Sp"])
+    E = Tp0 + 30.0 * Vp0 + 12.0 * Sp0
+    T = Tp0 + 58.0 * Vp0 - 9.0 * Sp0
+
+    s = G.solve_theta_3points(path, zP, b1, b2, sx, sy, dz, E, T)
+    assert s is not None
+    assert s["resid"] < 0.5, f"解けるはずの配置で3点が乗らない (残差 {s['resid']:.2f}mm)"
+    d = abs(((s["theta"] - th0 + 180.0) % 360.0) - 180.0)
+    assert d < 1.0, f"θ0={th0}° を取り戻せていない (解 {s['theta']:.1f}°)"
+
+    # 報告した面外ズレが、その θ を入れ直したときの実測と一致する（解と報告が食い違わない）
+    oe, ot = off(s["theta"], E, T)
+    assert abs(oe - abs(s["off_entry"])) < 1e-6 and abs(ot - abs(s["off_target"])) < 1e-6
+    assert abs(max(oe, ot) - s["resid"]) < 1e-6
+
+    # --- 解が存在しない配置でも「最良の θ」を返し、残差を正直に出すこと
+    E2 = np.array([252.0, 176.0, 168.0]); T2 = np.array([214.0, 190.0, 128.0])
+    s2 = G.solve_theta_3points(path, zP, b1, b2, sx, sy, dz, E2, T2)
+    brute = min(max(off(t, E2, T2)) for t in np.arange(0.0, 360.0, 1.0))
+    assert s2["resid"] <= brute + 1e-6, f"もっと良い θ がある (解 {s2['resid']:.2f} > 総当たり {brute:.2f})"
+    assert s2["resid"] > 1.0, "前提が崩れた: この配置は θ だけでは合わないはず"
+    oe2, ot2 = off(s2["theta"], E2, T2)
+    assert abs(max(oe2, ot2) - s2["resid"]) < 1e-6, "残差の報告が実測と食い違う"
+
+    # 近似版(ice_coplanarity)に負けないこと（＝真の幾何で解き直す意味がある）
+    ga = G.ice_geometry(path, zP, 193.0, b1, b2, sx, sy, dz)
+    ap = G.ice_coplanarity(ga, E2, T2)
+    assert s2["resid"] <= max(off(ap["best_theta"], E2, T2)) + 1e-6, "近似版に負けている"
+
+    # 押し引きを変えれば別の θ が解になる（θ が従属変数として追従する）
+    s3 = G.solve_theta_3points(path, 62.0, b1, b2, sx, sy, dz, E2, T2)
+    assert s3 is not None and abs(((s3["theta"] - s2["theta"] + 180) % 360) - 180) > 1.0
+    print("✅ 3-point lock: θ0=%.0f° を %.1f° として復元（残差 %.3fmm）／解無し配置でも最良 %.2fmm"
+          % (th0, s["theta"], s["resid"], s2["resid"]))

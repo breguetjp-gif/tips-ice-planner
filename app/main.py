@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.5"                                            # 配布のたびに上げる
+VERSION = "0.5.6"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -892,6 +892,7 @@ class MainWindow(QMainWindow):
         self.cz = self.cy = self.cx = 0
         self.wl = core.WL_DEFAULT; self.ww = core.WW_DEFAULT
         self.theta = 180.0; self.b1 = 0.0; self.b2 = 0.0; self.zP = 0.0
+        self.lock3 = False; self._lock3 = None      # 3点固定モード（θを自動で解く）と、その残差(mm)
         self.path = []; self.flip = False
         self.step = 0; self.ptMode = 0; self.iceRoll = 0.0
         # 挿入方向の既定＝施設でほぼ固定（設定に永続化・Settingsメニューから変更可）
@@ -967,11 +968,12 @@ class MainWindow(QMainWindow):
         self.handleCtl = HandleControl()
         self.handleCtl.b1Changed.connect(lambda x: self.sB1.setValue(int(round(x))))
         self.handleCtl.b2Changed.connect(lambda x: self.sB2.setValue(int(round(x))))
-        self.handleCtl.thetaChanged.connect(lambda x: self.sTheta.setValue(int(round(x)) % 360))
+        # 3点固定モード中、θ は「解かれる量」なので手では回せない（回してもすぐ上書きされ、
+        # 壊れているように見えてしまう）。入口のここで黙って無視する。
+        self.handleCtl.thetaChanged.connect(lambda x: None if self.lock3 else self.sTheta.setValue(int(round(x)) % 360))
         self.handleCtl.probeChanged.connect(lambda x: self.sProbe.setValue(int(round(x))) if self.sProbe.isEnabled() else None)
         # 経腹（体表）モード専用パネル＝同じ場所でHandleControlと表示を切り替える（先生指定2026-07-14）。
         self.surfCtl = SurfaceProbeControl()
-        self.surfCtl.setVisible(False)                       # 既定はICEモードなので最初は隠す
         self.surfCtl.b1Changed.connect(lambda x: self.sB1.setValue(int(round(x))))
         self.surfCtl.b2Changed.connect(lambda x: self.sB2.setValue(int(round(x))))
         self.surfCtl.thetaChanged.connect(lambda x: self.sTheta.setValue(int(round(x)) % 360))
@@ -1086,8 +1088,23 @@ class MainWindow(QMainWindow):
                    self.lblTheta, self.lblProbe, self.probeFoot, self.probeHead,
                    self.lblAP, self.lblLR):
             _w.setParent(self._vestigial)
-        h.addWidget(self.handleCtl, 2)
-        h.addWidget(self.surfCtl, 2)
+        # ICEのモック（AcuNavハンドル）の**すぐ下**に3点固定モードのスイッチを置く（先生指定 2026-07-15）
+        self.lock3Btn = self._btn("◎ 3-point lock: OFF", self._toggle_lock3, checkable=True,
+                                  ja="◎ 3点固定: OFF")
+        self.lock3Btn.setToolTip(L("Keep Entry and Target on the ICE image plane by solving θ automatically. "
+                                   "Push/pull and deflection stay in your hands.",
+                                   "θを自動で解いて Entry と Target を ICE画像面に乗せ続けます。"
+                                   "押し引きと偏向は先生が動かします。"))
+        self.handleBox = QWidget()
+        hbv = QVBoxLayout(self.handleBox); hbv.setContentsMargins(0, 0, 0, 0); hbv.setSpacing(3)
+        hbv.addWidget(self.handleCtl, 1); hbv.addWidget(self.lock3Btn, 0, Qt.AlignHCenter)
+        # ICE用と経腹用を QStackedWidget で重ねる。並べて片方を隠す作りだと、3点固定スイッチのぶん
+        # ICE側だけ背が高くなり、**モードを切り替えるたびに操作帯の高さが変わって4画面が飛び跳ねる**
+        # （実際そうなった）。スタックは常に一番高いページぶんの高さを確保するので、切り替えても動かない。
+        self.ctlStack = QStackedWidget()
+        self.ctlStack.addWidget(self.handleBox)              # index 0 = 血管内ICE
+        self.ctlStack.addWidget(self.surfCtl)                # index 1 = 経腹
+        h.addWidget(self.ctlStack, 2)
         h.addWidget(self._btn("Zero deflect", self._zero_defl, ja="偏向ゼロ"))
         h.addWidget(_sep())
         # --- 右ブロック: ロール／反転＋肝臓ゴースト（2行・常時表示） ---
@@ -1702,6 +1719,7 @@ class MainWindow(QMainWindow):
         return dict(
             files=list(self._current_files), path=list(self.path), zP=self.zP,
             theta=self.theta, b1=self.b1, b2=self.b2, iceRoll=self.iceRoll, flip=self.flip,
+            lock3=self.lock3,
             tipHighZ=self.tipHighZ, step=self.step, ptMode=self.ptMode,
             entry=_l(self.entry), target=_l(self.target),
             aim_tip=_l(self.aim_tip), aim_torque=self.aim_torque,
@@ -1763,6 +1781,10 @@ class MainWindow(QMainWindow):
         self.path = [list(p) for p in st.get("path", [])]; self.zP = st.get("zP", 0.0)
         self.theta = st.get("theta", 180.0); self.b1 = st.get("b1", 0.0); self.b2 = st.get("b2", 0.0)
         self.iceRoll = st.get("iceRoll", 0.0); self.flip = st.get("flip", False)
+        self.lock3 = bool(st.get("lock3", False))            # 3点固定モード
+        self.lock3Btn.setChecked(self.lock3)
+        self.lock3Btn.setText(L("◎ 3-point lock: ON", "◎ 3点固定: ON") if self.lock3
+                              else L("◎ 3-point lock: OFF", "◎ 3点固定: OFF"))
         self.tipHighZ = st.get("tipHighZ", True)
         self.step = st.get("step", 0); self.ptMode = st.get("ptMode", 0)
         self.entry = _a(st.get("entry")); self.target = _a(st.get("target"))
@@ -2079,8 +2101,51 @@ class MainWindow(QMainWindow):
             self.cz = int(np.clip(round(self.zP), 0, self.vol.shape[0] - 1)); self._refresh()
 
     def _set_probe(self, v): self._probe_to(v)
-    def _spin_theta(self, d): self.theta = (self.theta + d * 5) % 360; self.sTheta.setValue(int(self.theta)); self._refresh()
-    def _set_theta(self, v): self.theta = float(v); self._refresh()
+    # θ を手で回す入口。3点固定モード中は θ が「解かれる量」なので、どの入口からも受け付けない
+    # （受け付けて直後に上書きすると、ホイールが効かない・壊れている、という見え方になる）。
+    def _spin_theta(self, d):
+        if self.lock3:
+            return
+        self.theta = (self.theta + d * 5) % 360; self.sTheta.setValue(int(self.theta)); self._refresh()
+
+    def _set_theta(self, v):
+        if self.lock3:
+            return
+        self.theta = float(v); self._refresh()
+
+    def _toggle_lock3(self):
+        """3点固定モード。ONの間、θ は自動で解かれ、Entry と Target が ICE画像面に乗り続ける。
+        押し引きと偏向は先生の手に残る（先生決裁 2026-07-15）。"""
+        self.lock3 = self.lock3Btn.isChecked()
+        self.lock3Btn.setText(L("◎ 3-point lock: ON", "◎ 3点固定: ON") if self.lock3
+                              else L("◎ 3-point lock: OFF", "◎ 3点固定: OFF"))
+        if not self.lock3:
+            self._lock3 = None
+        self._refresh()
+        if self.lock3 and self._lock3 is None:               # ONにしたのに解けなかった＝条件が足りない
+            self.statusBar().showMessage(
+                L("3-point lock needs an IVC path, an Entry and a Target in intravascular ICE mode.",
+                  "3点固定には、血管内ICEモードで IVCパス・Entry・Target が必要です。"), 6000)
+
+    def _apply_lock3(self):
+        """θ を解いて Entry/Target を ICE画像面に乗せる。_refresh の先頭で毎回呼ぶ。
+
+        自由度4（押し引き・θ・A/P偏向・L/R偏向）に対し拘束は2本なので、θ だけでは残差が残りうる。
+        残差は隠さず mm で出す（先生決裁）。押し引きの位置が良ければ 0.0mm まで落ちる。"""
+        self._lock3 = None
+        if not (self.lock3 and self.viewMode == "ice" and self.vol is not None and len(self.path) >= 2
+                and self.entry is not None and self.target is not None):
+            return
+        v = self.vol
+        s = core.solve_theta_3points(self.path, self.zP, self.b1, self.b2, v.sx, v.sy, v.dz,
+                                     self.entry, self.target, tip_high_z=self.tipHighZ)
+        if s is None:
+            return
+        self.theta = float(s["theta"]) % 360.0
+        self._lock3 = s
+        self.sTheta.blockSignals(True)                       # 解いた値をスライダへ（信号は出さない＝再入しない）
+        self.sTheta.setValue(int(round(self.theta)) % 360)
+        self.sTheta.blockSignals(False)
     def _set_b1(self, v): self.b1 = float(v); self._refresh()
     def _set_b2(self, v): self.b2 = float(v); self._refresh()
     def _zero_defl(self):
@@ -2100,7 +2165,7 @@ class MainWindow(QMainWindow):
         """経腹モードでは操作ウィジェットをHandleControl→SurfaceProbeControlへ丸ごと切り替える
         （先生指定2026-07-14：ラベルの読み替えではなく専用ウィジェットへスイッチ）。"""
         surf = (self.viewMode == "surface")
-        self.handleCtl.setVisible(not surf); self.surfCtl.setVisible(surf)
+        self.ctlStack.setCurrentIndex(1 if surf else 0)      # 3点固定スイッチごと切り替え（高さは不変）
         for w in (self.lblProbe, self.probeFoot, self.sProbe, self.probeHead):
             w.setVisible(not surf)                            # 経腹は push-pull なし
         self._sync_handle()
@@ -2157,7 +2222,22 @@ class MainWindow(QMainWindow):
                  + L(f"Straight path Entry → Target: {nh.get('length', 0):.0f} mm",
                      f"Entry → Target 直線距離: {nh.get('length', 0):.0f} mm") + "</span>"]
         g = self._ice_geom
-        if self.viewMode == "ice" and g is not None and self.entry is not None and self.target is not None:
+        if self.lock3 and self._lock3 is not None:           # 3点固定モード: 解いた結果と残差をそのまま出す
+            s = self._lock3
+            oe, ot, res = s["off_entry"], s["off_target"], s["resid"]
+            col = "#5fd282" if res < 2.0 else ("#ffd246" if res < 8.0 else "#F08F69")
+            lines.append(f"<span style='color:{col};'>"
+                         + L(f"◎ 3-point lock ON — θ solved to {self.theta:.0f}°. "
+                             f"Off-plane: Entry {oe:+.1f} mm / Target {ot:+.1f} mm",
+                             f"◎ 3点固定 ON — θを {self.theta:.0f}° に自動調整。"
+                             f"面外のズレ: Entry {oe:+.1f} mm / Target {ot:+.1f} mm") + "</span>")
+            if res >= 2.0:
+                lines.append("<span style='color:#9fb4c8;'>"
+                             + L("Push/pull the catheter to reduce the remaining offset "
+                                 "(θ alone cannot close it at this position).",
+                                 "押し引きで残りのズレを詰められます"
+                                 "（この位置では θ だけでは合わせきれません）") + "</span>")
+        elif self.viewMode == "ice" and g is not None and self.entry is not None and self.target is not None:
             cp = core.ice_coplanarity(g, self.entry, self.target)
             oe, ot = cp["off_entry"], cp["off_target"]
             worst = max(abs(oe), abs(ot))
@@ -2268,6 +2348,7 @@ class MainWindow(QMainWindow):
     def _refresh(self):
         if self.vol is None:
             return
+        self._apply_lock3()                                  # 3点固定モード: 幾何を作る前に θ を解く
         v = self.vol; nz, H, W = v.shape
         a = core.ortho_image(v.array, v.sx, v.sy, v.dz, 0, self.cz, self.wl, self.ww); self.ax.set_image(*a)
         c = core.ortho_image(v.array, v.sx, v.sy, v.dz, 1, self.cy, self.wl, self.ww); self.cor.set_image(*c)

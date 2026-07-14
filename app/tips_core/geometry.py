@@ -562,6 +562,57 @@ def ice_coplanarity(geom, entry, target, step_deg=0.5):
     return dict(off_entry=off_e, off_target=off_t, best_theta=best_th, best_off=best_off)
 
 
+def solve_theta_3points(path_pts, zP, b1_deg, b2_deg, sx, sy, dz, entry, target,
+                        tip_high_z=True, coarse=4.0, span=6.0, fine=0.25):
+    """Entry と Target が ICE 画像面にいちばんよく乗る θ(度) を、**真の幾何で**解く。
+
+    ice_coplanarity() は現在の頂点 Tp と接線 Sp を固定したままビーム Vp だけを回す近似。
+    偏向をかけていると θ は「どちら向きに曲げるか」そのものを変えるので、Tp も先端接線 t1 も動く。
+    近似のままだと「言われたとおり θ を回したのに合わない」ことが起きるので、ここは候補 θ ごとに
+    ice_geometry を作り直して評価する。粗く一周して最良点を掴み、その周りだけ細かく詰める。
+
+    自由度4（押し引き・θ・A/P偏向・L/R偏向）に対し拘束は2本（Entry と Target が面上）なので、
+    θ だけでは一般に残差が残る。残差は呼び出し側が mm で表示する（＝ごまかさない）。
+
+    返り値 dict(theta, off_entry, off_target, resid)。パス不足などで無効なら None。
+    """
+    E = np.asarray(entry, float); T = np.asarray(target, float)
+
+    def _off(th):
+        g = ice_geometry(path_pts, zP, th, b1_deg, b2_deg, sx, sy, dz, tip_high_z=tip_high_z)
+        if g is None:
+            return None
+        Tp = np.asarray(g["Tp"], float)
+        n = np.cross(nrm(g["Vp"]), nrm(g["Sp"]))          # 画像面の法線
+        m = np.linalg.norm(n)
+        if m < 1e-9:
+            return None
+        n = n / m
+        return float((E - Tp) @ n), float((T - Tp) @ n)
+
+    best = None
+    th = 0.0
+    while th < 360.0:                                      # 粗く一周
+        o = _off(th)
+        if o is not None:
+            r = max(abs(o[0]), abs(o[1]))
+            if best is None or r < best[0]:
+                best = (r, th, o)
+        th += coarse
+    if best is None:
+        return None
+    lo, hi = best[1] - span, best[1] + span                # 最良点の周りだけ細かく
+    th = lo
+    while th <= hi:
+        o = _off(th)
+        if o is not None:
+            r = max(abs(o[0]), abs(o[1]))
+            if r < best[0]:
+                best = (r, th, o)
+        th += fine
+    return dict(theta=best[1] % 360.0, off_entry=best[2][0], off_target=best[2][1], resid=best[0])
+
+
 # ===== 経腹コンベックス・プローブの扇幾何（ice_image が消費する dict を返す）=====
 def surface_geometry(contact, inward_normal, theta_deg, tilt_deg, rock_deg, sx, sy, dz,
                      plane_axis=(0.0, 0.0, 1.0), r0=CONVEX_R0, depth=CONVEX_DEPTH, fan_half=CONVEX_FAN):

@@ -15,12 +15,11 @@ vol_meta.json
 *_list.json
 path_clicks.json
 
-# 外部参照クローン（Miele/OsiriX等）はgit管理外
+# 外部の参照用クローンは git 管理外
 _vendor/
 # ビルド成果物
 build/
 DerivedData/
-*.mieleplugin/
 # 配布キット(署名済みバイナリ等)
 dist/
 *.zip

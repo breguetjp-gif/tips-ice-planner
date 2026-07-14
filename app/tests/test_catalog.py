@@ -300,7 +300,7 @@ def run():
     win._activate(win.cor)
     assert win.cor.active and not win.ax.active, "active frame must follow the hovered pane"
     main.GestureBar().grab()                                  # 凡例バー（拡大縮小/階調/移動 アイコン）描画
-    # Mieleプラグイン→アプリ 橋渡し: URLスキームのパース（純粋関数）
+    # 外部アプリ→本アプリ: URLスキームのパース（純粋関数）
     from PySide6.QtCore import QUrl
     _u = QUrl(f"{main.URL_SCHEME}://open?dir=/tmp/some%20study%20folder")
     assert main.path_from_open_event(_u, "") == "/tmp/some study folder", "URL scheme dir must url-decode"
@@ -316,7 +316,7 @@ def run():
     assert _got == ["/tmp/pending"], "buffered open events must flush on handler set"
     _disp.dispatch("/tmp/live")                               # 設定後は即配送
     assert _got == ["/tmp/pending", "/tmp/live"], "post-handler events dispatch immediately"
-    # Miele→アプリ 永久取り込み: 新規スタディを _import_external で取り込む（temp data_dir に隔離）
+    # 外部からの永久取り込み: 新規スタディを _import_external で取り込む（temp data_dir に隔離）
     _ho = os.path.join(tmp, "handoff2"); os.makedirs(_ho)
     _su = generate_uid(); _se = generate_uid()
     for z in range(5):                                        # 単一相(=1シリーズ)の新規スタディ
@@ -517,7 +517,7 @@ def run():
     win._set_insertion_default(True)
     assert settings_store.store().value("insertion_default") == "femoral" and win.tipHighZ is True
     # --- 設定の保存先(QStandardPaths.AppDataLocation)はQCoreApplication.applicationNameに依存し、
-    # 未設定だと実行環境によって変わり得る（先生指摘：更新の度に寄付回答が消える不具合の原因）。
+    # 未設定だと実行環境によって保存先が変わり得る（更新のたびに設定が消える不具合の原因になった）。
     # main()がこれを明示固定していることをソースから確認する（黙って削除されると実害が出るため回帰防止）。
     import inspect
     assert 'setApplicationName("TIPS ICE Planner")' in inspect.getsource(main.main), \

@@ -1,7 +1,7 @@
 # TIPS Planner — standalone (Windows / macOS)
 
-Cross-platform standalone rewrite of the Miele-LXIV plugin. Same compute core (`tips_core`),
-own DICOM loader (pydicom + GDCM) and own UI (PySide6, Qt). No Miele dependency.
+The application. Cross-platform (macOS / Windows), with its own compute core (`tips_core`),
+its own DICOM loader (pydicom + GDCM) and its own UI (PySide6, Qt). It depends on nothing else.
 
 > ⚠️ Research / education / self-training only. Not a medical device. Not intra-procedural
 > navigation. The operator makes all final clinical decisions.
@@ -26,11 +26,11 @@ python3.13 -m venv ~/.tips_planner/venv
 >    `createPlatformIntegration`. Keep the venv at `~/.tips_planner/venv`; the source code may stay
 >    in the spaced repo path. `run.command` does this automatically.
 
-Entry point = the **Database** (Miele-style): **Import DICOM folder…** → studies appear with
+Entry point = the **Database**: **Import DICOM folder…** → studies appear with
 thumbnails and an editable **Comment** column → double-click a series to open it in the viewer.
 
 ## Features
-- **Database entry point** (Miele-style): import DICOM, study/series tree, thumbnails, an editable
+- **Database entry point**: import DICOM, study/series tree, thumbnails, an editable
   per-study comment, search, open → viewer. The catalog lives in the OS app-data folder, so patient
   data stays local and never enters the repository. An **anonymise** toggle masks patient name and ID
   in the list.
@@ -53,4 +53,4 @@ thumbnails and an editable **Comment** column → double-click a series to open 
 GPL-3.0-or-later, as for the repository as a whole (see `../LICENSE`). PySide6 is used under the LGPL;
 NumPy, pydicom and GDCM are permissive.
 
-*M. Yamamoto.*
+*Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan.*

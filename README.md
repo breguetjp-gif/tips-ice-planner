@@ -29,17 +29,14 @@ The predicted view deliberately keeps **CT appearance** rather than synthesising
 geometric rehearsal of *where the portal vein, hepatic vein and IVC will sit in the ICE image*, not a
 photorealistic ultrasound simulation.
 
-## Two front ends, one compute core
+## Layout
 
 | | |
 |---|---|
-| `app/` | **Standalone application** (macOS + Windows). Python 3.13 / PySide6 / pydicom. Own DICOM loader, own database, own viewer. No Miele dependency. |
-| `plugin/` | **Miele-LXIV plugin** (Objective-C). Runs inside the Miele-LXIV DICOM workstation. |
-| `plugin-send/` | **"Send to ICE Planner"** database plugin — hands the selected study from Miele-LXIV to the standalone app via the `tipsiceplanner://` URL scheme. |
+| `app/` | The application. macOS and Windows. Python 3.13 / PySide6 / pydicom, with its own DICOM loader, catalogue and viewer. |
 
-`app/tips_core/geometry.py` is the **single source of truth** for the geometry (oblique-MPR reslice,
-side-firing fan, two-axis deflection, tip bend, needle arc). The Objective-C plugin implements the
-same equations; the Python port is verified against it.
+`app/tips_core/geometry.py` holds the geometry: the oblique-MPR reslice, the side-firing sector, the
+two-axis deflection, the tip bend and the needle arc.
 
 ## Running the standalone app
 
@@ -73,16 +70,6 @@ first launch.
 
 Full user manuals: [`app/docs/manual_en.pdf`](app/docs/manual_en.pdf) ·
 [`app/docs/manual_ja.pdf`](app/docs/manual_ja.pdf)
-
-## Building the Miele-LXIV plugin
-
-```bash
-bash plugin/build.sh          # compiles, ad-hoc signs, installs into the Miele-LXIV container
-bash plugin-send/build.sh
-```
-Set `SIGN_ID` to sign with your own identity; the default is ad-hoc, which is sufficient locally.
-Because the plugin links Miele-LXIV in-process, it is a derivative work and is distributed under the
-**GPL-3.0** (see *License*).
 
 ## Tests
 
@@ -126,11 +113,11 @@ Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
 
 **GNU General Public License v3.0 or later** — see [`LICENSE`](LICENSE) (identical text is provided as
 `Licence.txt`). The standalone application uses PySide6 under the LGPL; NumPy, pydicom and GDCM are
-permissive. The Miele-LXIV plugin links a GPL-3.0 host in-process and is therefore itself GPL-3.0.
+permissive.
 
 ## Support
 
 Please open an issue on the GitHub repository.
 
 ---
-*M. Yamamoto — interventional radiologist, Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan.*
+*Masayoshi Yamamoto — interventional radiologist, Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan.*

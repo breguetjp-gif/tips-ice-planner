@@ -1,4 +1,4 @@
-"""DICOM シリーズ読込（Miele の代替）。フォルダ/ファイル列 → HUボリューム + spacing。
+"""DICOM シリーズ読込。フォルダ/ファイル列 → HUボリューム + spacing。
 
 pydicom + GDCM/pylibjpeg で JPEG Lossless 等の圧縮も展開（デコーダは pip 導入時に自動登録）。
 シリーズは ImagePositionPatient（スライス法線方向）でソート、RescaleSlope/Intercept で HU化。

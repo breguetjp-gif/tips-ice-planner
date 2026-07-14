@@ -42,7 +42,7 @@ if sys.platform == 'darwin':
                      'NSHighResolutionCapable': True,
                      'CFBundleShortVersionString': '0.4.58',
                      'LSMinimumSystemVersion': '11.0',
-                     # Mieleプラグイン→本アプリの橋渡し用URLスキーム（tipsiceplanner://open?dir=...）
+                     # 外部アプリから検査を渡すためのURLスキーム（tipsiceplanner://open?dir=...）
                      'CFBundleURLTypes': [{
                          'CFBundleURLName': 'com.bonchan.tips-ice-planner.open',
                          'CFBundleURLSchemes': ['tipsiceplanner'],

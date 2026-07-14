@@ -1,4 +1,4 @@
-"""Miele Database 風の入口ビュー（検査一覧＋サムネイル帯）。
+"""入口のビュー（検査一覧＋サムネイル帯）。
 
   上: 検査ごとに1行だけのスタディ表（読みやすい濃紺ゼブラ・Comment 列は編集可）。
   下: 選択スタディのシリーズをサムネイルで横並び（説明 + N img）。
@@ -261,7 +261,7 @@ class DatabaseView(QWidget):
 
     def select_study(self, study_uid, open_if_single=True):
         """study_uid のスタディをツリーで選択しサムネ表示。相(シリーズ)が1つなら自動で開く。
-        Mieleからの取り込み後に呼ぶ。見つかれば True。"""
+        外部から取り込んだ直後に呼ぶ。見つかれば True。"""
         if not study_uid:
             return False
         for i in range(self.tree.topLevelItemCount()):

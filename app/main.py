@@ -1,4 +1,4 @@
-"""TIPS Planner — スタンドアロン版 (Win/Mac)。Miele プラグインからの機能移植版。
+"""TIPS ICE Planner — スタンドアロン・アプリケーション (macOS / Windows)。
 
 研究・教育用 / 医療機器ではない / 術中ナビではない / 最終判断は術者。
 計算は tips_core（Mac プラグインと同一の正本）を再利用。
@@ -26,9 +26,9 @@ import settings_store
 from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
-AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
+AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
 VERSION = "0.4.58"                                            # 配布のたびに上げる
-URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
+URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
 
@@ -1480,7 +1480,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Load error: {ex}", 8000)
 
     def open_external_path(self, path):
-        """Mieleプラグイン等から渡されたフォルダ/ファイルを TIPS ICE Planner に
+        """外部アプリから渡されたフォルダ/ファイルを TIPS ICE Planner に
         永久取り込み（カタログ登録＋アプリ専用領域へコピー）してから開く。
         相(シリーズ)ごとに分離して保存し、患者一覧から相を選んで開ける。"""
         import os
@@ -2576,7 +2576,7 @@ def main():
     # 設定/カタログの保存先(QStandardPaths.AppDataLocation)はQCoreApplication.applicationName()に依存し、
     # 未設定だと実行環境(凍結アプリ/素のpython等)でexe名から暗黙に決まり、環境によってブレうる。
     # 明示指定して固定＝配布アプリの実際の保存先(~/Library/Application Support/TIPS ICE Planner/TIPSPlanner)と
-    # 完全一致させ、更新のたびに寄付回答等の設定が読めなくなる事故を防ぐ。
+    # 完全一致させる。ここがずれると保存先フォルダごと変わり、更新のたびに設定が読めなくなる。
     app.setApplicationName("TIPS ICE Planner")
     app.setStyle("Fusion")          # macOSネイティブはQSSのボタン背景を無視→Fusionで確実に描画（選択中ボタンが見える）
     if os.environ.get("TIPS_SELFTEST"):   # 凍結ビルド検証用：全モジュール/ネイティブlibの読込確認
@@ -2589,7 +2589,7 @@ def main():
     if os.path.exists(_ic):
         app.setWindowIcon(QIcon(_ic))   # Dock/ウィンドウのアイコン
     win = MainWindow(); win.show()
-    app.set_open_handler(win.open_external_path)             # Mieleプラグイン等からの「開く」を受け付ける
+    app.set_open_handler(win.open_external_path)             # 外部アプリからの「開く」を受け付ける
     for a in sys.argv[1:]:                                   # 新規起動時に渡されたフォルダ/ファイルも開く
         if not a.startswith("-") and os.path.exists(a):
             win.open_external_path(a); break

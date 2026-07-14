@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.56"                                            # 配布のたびに上げる
+VERSION = "0.4.57"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -247,6 +247,7 @@ class Pane3D(QWidget):
         self.shaft = None; self.orange = None; self.arr = None
         self.fan = None; self.needle = None
         self.probe_outline = None; self.probe_face = None    # 経腹コンベックス・プローブ本体（3D）
+        self.probe_array = None; self.probe_button = None    # 青いアレイ帯・操作ボタン（実機風の詳細）
         self.entry = None; self.target = None; self.apex = None
         self.valid = False; self.active = False
         self.liver = None; self.show_liver = True            # 肝臓ゴースト
@@ -261,6 +262,7 @@ class Pane3D(QWidget):
         self.needle_tip = None; self.needle_pred = None       # 金属ベベル先端＋進行方向
         self.dash_phase = 0.0                                 # 進行方向の流れるダッシュ位相（_tick_dashが供給）
         self.zoom3d = 1.0; self.pan3d = QPointF(0, 0)         # カーソル中心ズーム（右クリックでリセット）
+        self._moving_probe = False                            # 経腹: プローブ/体表を掴んで移動中（掴んだら回転せず追従）
         self.setMinimumSize(260, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -275,6 +277,7 @@ class Pane3D(QWidget):
             self.shaft = d.get("shaft"); self.orange = d.get("orange"); self.arr = d.get("arr")
             self.fan = d.get("fan"); self.needle = d.get("needle")
             self.probe_outline = d.get("probe_outline"); self.probe_face = d.get("probe_face")
+            self.probe_array = d.get("probe_array"); self.probe_button = d.get("probe_button")
             self.entry = d.get("entry"); self.target = d.get("target"); self.apex = d.get("apex")
             self.aim_outline = d.get("aim_outline"); self.aim_pred = d.get("aim_pred")
             self.aim_tip = d.get("aim_tip")
@@ -396,25 +399,29 @@ class Pane3D(QWidget):
         self._body_qimg = QImage(buf.data, b.width(), b.height(), 4 * b.width(), QImage.Format_RGBA8888)
         p.drawImage(0, 0, self._body_qimg)
 
-    def _pick_body(self, pos, c, s, b):
-        """カーソル直下の最前面の体表点index。無ければ None。"""
+    def _pick_body(self, pos, c, s, b, radius=18.0, nearest=False):
+        """カーソル直下の最前面の体表点index。radius内に無ければ None。
+        nearest=True（移動中スティッキー）は半径外でも画面上で近い点群から最前面を掴み続ける。"""
         if self.body is None:
             return None
         surf = self.body["surf"]
         u, v, depth = liver_core._project(surf, self.az, self.el, c, s * self.zoom3d, b.width(), b.height(),
                                           offset=(self.pan3d.x(), self.pan3d.y()))
         d2 = (u - pos.x()) ** 2 + (v - pos.y()) ** 2
-        within = d2 < (18 * 18)
-        if not within.any():
-            return None
-        cand = np.where(within)[0]
-        return int(cand[np.argmax(depth[cand])])              # 手前(depth大)を選ぶ
+        within = d2 < (radius * radius)
+        if within.any():
+            cand = np.where(within)[0]
+            return int(cand[np.argmax(depth[cand])])          # 半径内→手前(depth大)を選ぶ
+        if nearest:                                           # 半径外でも最近傍40点から最前面（掴んだら離さない）
+            k = np.argsort(d2)[:40]
+            return int(k[np.argmax(depth[k])])
+        return None
 
     def paintEvent(self, _):
         p = QPainter(self); p.fillRect(self.rect(), QColor(7, 10, 14)); p.setPen(TERRA)
         surf_mode = self.show_body and self.body is not None
-        p.drawText(8, 16, L("3D body surface  (drag on body = move probe / drag elsewhere = rotate view)",
-                            "3D体表（体表をドラッグ = プローブ移動 / 余白をドラッグ = 視点回転）")
+        p.drawText(8, 16, L("3D body surface — drag probe/body = move · drag space = rotate · wheel/pinch = zoom · right-click = reset",
+                            "3D体表 — プローブ/体表ドラッグ=移動 / 余白ドラッグ=回転 / ホイール・ピンチ=拡大縮小 / 右クリック=リセット")
                    if surf_mode else L("3D linkage (drag to rotate, wheel to zoom, right-click to reset)",
                                        "3D連動（ドラッグ = 回転 / ホイール = 拡大縮小 / 右クリック = リセット）"))
         if not surf_mode and (not self.valid or self.apex is None):
@@ -433,10 +440,15 @@ class Pane3D(QWidget):
         if self.fan is not None and len(self.fan) > 2:        # 扇
             poly = QPolygonF(self._poly(self.fan, c, s, b))
             p.setBrush(QBrush(QColor(56, 200, 215, 46))); p.setPen(QPen(QColor(255, 215, 100, 200), 1)); p.drawPolygon(poly)
-        if self.probe_outline is not None and len(self.probe_outline) > 2:   # コンベックス・プローブ本体
+        if self.probe_outline is not None and len(self.probe_outline) > 2:   # コンベックス・プローブ本体（下部モックと同じ実機風：白い筐体＋青いアレイ＋ボタン）
             poly = QPolygonF(self._poly(self.probe_outline, c, s, b))
-            p.setBrush(QColor(120, 220, 235, 120)); p.setPen(QPen(QColor(120, 220, 235), 2)); p.drawPolygon(poly)
-            self._stroke(p, self.probe_face, c, s, b, QColor(255, 255, 255), 2)   # 皮膚に当たる凸面
+            p.setBrush(QColor(201, 210, 221, 240)); p.setPen(QPen(QColor(120, 132, 150), 2)); p.drawPolygon(poly)   # 白い筐体
+            if self.probe_array is not None and len(self.probe_array) > 2:    # 青いアレイ凸面（皮膚に当たる走査面）
+                ap = QPolygonF(self._poly(self.probe_array, c, s, b))
+                p.setBrush(QColor(80, 146, 196, 245)); p.setPen(QPen(QColor(42, 90, 138), 2)); p.drawPolygon(ap)
+            if self.probe_button is not None:                                 # 操作ボタン
+                bc = self._proj(self.probe_button, c, s, b)
+                p.setBrush(QColor(120, 172, 212)); p.setPen(QPen(QColor(120, 132, 150), 1)); p.drawEllipse(bc, 3.0, 3.0)
         self._stroke(p, self.shaft, c, s, b, QColor(204, 217, 230), 5)        # 灰シャフト
         self._stroke(p, self.orange, c, s, b, QColor(245, 140, 50), 8)        # 偏向で曲がる先端
         self._stroke(p, self.arr, c, s, b, QColor(64, 184, 250), 5)           # アレイ
@@ -471,12 +483,13 @@ class Pane3D(QWidget):
         self._draw_orient_cube(p, b)                          # 解剖方位キューブ（A/P・R/L・S/I）
         _frame(p, self, self.active)
 
-    def _try_pick(self, e):
-        """経腹モード: 体表上ならプローブ設置/移動を発火。拾えたら True。"""
+    def _try_pick(self, e, sticky=False):
+        """経腹モード: プローブ/体表近傍を掴めたらプローブ設置/移動を発火。拾えたら True。
+        sticky=True（移動中）は許容半径を広げ、半径外でも最近傍で追従し続ける。"""
         if not (self.show_body and self.body is not None and (e.buttons() & Qt.LeftButton)):
             return False
         b = self.rect(); c, s = self._surf_frame(b)
-        idx = self._pick_body(e.position(), c, s, b)
+        idx = self._pick_body(e.position(), c, s, b, radius=(46.0 if sticky else 28.0), nearest=sticky)
         if idx is None:
             return False
         self.surfacePicked.emit(idx); return True
@@ -492,23 +505,23 @@ class Pane3D(QWidget):
 
     def mousePressEvent(self, e):
         self._last = e.position(); self._press = e.position(); self._moved = False
-        self._try_pick(e)                                     # 押した瞬間に体表なら設置
+        self._moving_probe = self._try_pick(e)                # 押した瞬間にプローブ/体表近傍なら掴む
 
     def mouseMoveEvent(self, e):
         if self._last is None:
             return
         if (e.position() - getattr(self, "_press", e.position())).manhattanLength() > 2.5:
             self._moved = True
-        if self._try_pick(e):                                # 体表をなぞる＝プローブ移動（ヌルヌル）
-            self._last = e.position(); return
-        d = e.position() - self._last                        # 体表外＝視点回転
+        if getattr(self, "_moving_probe", False):            # 掴んだら体表をなぞってプローブ移動（半径外でも追従・回転しない）
+            self._try_pick(e, sticky=True); self._last = e.position(); return
+        d = e.position() - self._last                        # 掴んでいない＝視点回転
         self.az += d.x() * 0.5; self.el = max(-89, min(89, self.el + d.y() * 0.5))
         self._last = e.position(); self.update()
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.RightButton and not getattr(self, "_moved", False):   # 右クリック=ズームリセット
             self.zoom3d = 1.0; self.pan3d = QPointF(0, 0); self.update()
-        self._last = None
+        self._last = None; self._moving_probe = False
 
     def wheelEvent(self, e):
         dy = e.angleDelta().y()
@@ -2119,12 +2132,14 @@ class MainWindow(QMainWindow):
             # 上に重なって隠してしまわないようにする（先生報告「実際の針が描画できていない」の原因）。
             self._draw_catheter_body(p, to_widget, v, plane, nz)
         if self.viewMode == "surface" and self.contact is not None:   # 経腹プローブ（コンベックス形状）
-            if g is not None and plane == self.surfPlane:              # 置いた断面＝プローブを実物形状で描く
+            if g is not None and plane == self.surfPlane:              # 置いた断面＝プローブを実物形状で描く（3D/下部モックと同じ実機風）
                 gl = core.probe_glyph(g)
-                out = QPolygonF([to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz)) for P in gl["outline"]])
-                p.setBrush(QColor(120, 220, 235, 70)); p.setPen(QPen(QColor(120, 220, 235), 2)); p.drawPolygon(out)
-                fc = QPolygonF([to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz)) for P in gl["face"]])
-                p.setBrush(Qt.NoBrush); p.setPen(QPen(Qt.white, 2)); p.drawPolyline(fc)   # 皮膚に当たる凸面
+                _pm = lambda P: to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz))
+                out = QPolygonF([_pm(P) for P in gl["outline"]])
+                p.setBrush(QColor(201, 210, 221, 150)); p.setPen(QPen(QColor(120, 132, 150), 2)); p.drawPolygon(out)   # 白い筐体
+                ar = QPolygonF([_pm(P) for P in gl["array"]])
+                p.setBrush(QColor(80, 146, 196, 220)); p.setPen(QPen(QColor(42, 90, 138), 1.5)); p.drawPolygon(ar)     # 青いアレイ凸面
+                p.setBrush(QColor(120, 172, 212)); p.setPen(QPen(QColor(120, 132, 150), 1)); p.drawEllipse(_pm(gl["button"]), 3, 3)
             else:                                                     # 他断面＝位置のドット
                 cc, rr = core.proj_mm(self.contact, v.sx, v.sy, v.dz, plane, nz)
                 p.setBrush(CYAN); p.setPen(QPen(Qt.white, 1.5)); p.drawEllipse(to_widget(cc, rr), 4, 4)
@@ -2476,6 +2491,7 @@ class MainWindow(QMainWindow):
             self.p3d.set_geom(dict(shaft=None, orange=None, arr=None, fan=fan, apex=apex,
                                    needle=(nh["full"] if nh else None), cannula=None,
                                    probe_outline=pg["outline"], probe_face=pg["face"],
+                                   probe_array=pg["array"], probe_button=pg["button"],
                                    entry=self.entry, target=self.target, liver=self.liver,
                                    aim_outline=aim_outline, aim_pred=aim_pred, aim_tip=self.aim_tip))
             return

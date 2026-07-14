@@ -230,10 +230,14 @@ def test_features():
     # plane_axis: 扇の側方Spが指定面内（Coronal=y法線→Spはy成分ゼロ）
     gc = core.surface_geometry([100., 100., 50.], [0., 0., 1.0], 0, 0, 0, 0.7, 0.7, 1.0, plane_axis=(0, 1, 0))
     assert abs(np.array(gc["Sp"])[1]) < 1e-6, "coronal placement: lateral stays in the coronal plane"
-    # probe_glyph: コンベックス外形（凸面の中央≈接触点／筐体込みで点数十分）
+    # probe_glyph: コンベックス外形（凸面の中央≈接触点／筐体込みで点数十分）＋実機風の詳細(青アレイ帯/ボタン)
     gl = core.probe_glyph(g)
     assert gl["face"].shape[1] == 3 and gl["outline"].shape[1] == 3 and len(gl["outline"]) >= 10
     assert np.linalg.norm(gl["face"][len(gl["face"]) // 2] - np.array(g["Tp"])) < 5.0, "face center ≈ contact"
+    assert gl["array"].shape[1] == 3 and len(gl["array"]) == 2 * len(gl["face"]), "アレイ帯=凸面弧＋内側弧の閉じた帯"
+    assert np.asarray(gl["button"]).shape == (3,), "操作ボタンは1つのworld点"
+    # ボタン・筐体頂部は体外側(-Vp)＝接触点よりビーム逆方向にある
+    assert (np.asarray(gl["button"]) - np.array(g["Tp"])) @ np.array(g["Vp"]) < 0, "ボタンは筐体(体外側)にある"
     # needle_glyph: 実際の針の外形（シャフト+先端のテーパー、5点の閉ポリゴン、先端=tip）
     ngl = core.needle_glyph([0., 0., 0.], [0., 0., 30.], width=2.0, taper=6.0)
     assert ngl["outline"].shape == (5, 3) and np.allclose(ngl["tip"], [0., 0., 30.])

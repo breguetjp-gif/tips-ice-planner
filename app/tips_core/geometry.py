@@ -630,18 +630,35 @@ def needle_glyph(p1, tip, width=2.2, taper=7.0):
     return dict(outline=outline, tip=T, shaft_end=shaft_end)
 
 
-def probe_glyph(geom, housing_mm=24.0, n=16):
-    """コンベックス・プローブの外形（world 3D点・撮像面内）。
-      face=皮膚に当たる凸面の弧／outline=筐体(体外側)込みの閉ポリゴン点列。UIで掴む・描くのに使う。"""
+def probe_glyph(geom, housing_mm=40.0, n=18):
+    """コンベックス・プローブの外形（world 3D点・撮像面内）。実機の探触子＆下部モックに寄せた造形：
+      face   = 皮膚に当たる凸面の弧（アレイ表面）
+      array  = 青いアレイ帯（薄い三日月・塗り）
+      outline= 白い筐体の閉ポリゴン（肩で広がり首で細く丸い頂部・体外側 -Vp へ）
+      button = 前面の操作ボタン点
+      housing= 互換用の簡易4点。UIで掴む・描くのに使う。"""
     Tp = np.asarray(geom["Tp"], float); Vp = np.asarray(geom["Vp"], float); Sp = np.asarray(geom["Sp"], float)
     r0 = float(geom.get("r0", 0.0)); fan = float(geom["fan_half"])
     rr = r0 if r0 > 1e-3 else 8.0                          # ICE(r0=0)でも小さな凸面に
     A = Tp - rr * Vp                                       # 仮想頂点（皮膚の外側）
-    face = [A + rr * (np.cos(ph) * Vp + np.sin(ph) * Sp) for ph in np.linspace(-fan, fan, n)]
-    L, R = face[0], face[-1]
-    Rh = R - housing_mm * Vp; Lh = L - housing_mm * Vp     # 筐体（体外側＝-Vp）
-    outline = face + [Rh, Lh]                              # 凸面(L→R)→右筐体上→左筐体上（描画時に閉じる）
-    return dict(face=np.array(face), outline=np.array(outline), housing=np.array([L, R, Rh, Lh]))
+    phis = np.linspace(-fan, fan, n)
+    face = np.array([A + rr * (np.cos(ph) * Vp + np.sin(ph) * Sp) for ph in phis])       # アレイ凸面(皮膚)
+    inner = np.array([A + (rr - 3.0) * (np.cos(ph) * Vp + np.sin(ph) * Sp) for ph in phis])
+    array = np.vstack([face, inner[::-1]])                 # 青いアレイ帯（薄い三日月）
+    half = rr * np.sin(fan); dch = rr * np.cos(fan)        # 面の側方半幅・弦の深さ
+
+    def P(d, lat):                                         # (Vp方向の深さ d, 側方 lat) → world 3D
+        return A + d * Vp + lat * Sp
+    hm = housing_mm
+    outline = np.array([                                   # 体外側 -Vp（=深さを弦から減らす方向）へ立ち上がる筐体
+        face[0], P(dch - 5, -half * 1.06), P(dch - hm * 0.5, -half * 0.92),
+        P(dch - hm * 0.82, -half * 0.5), P(dch - hm, -half * 0.18),
+        P(dch - hm, half * 0.18), P(dch - hm * 0.82, half * 0.5),
+        P(dch - hm * 0.5, half * 0.92), P(dch - 5, half * 1.06), face[-1],
+    ])
+    button = P(dch - hm * 0.45, 0.0)
+    housing = np.array([face[0], face[-1], P(dch - hm, half * 0.18), P(dch - hm, -half * 0.18)])
+    return dict(face=face, array=array, outline=outline, button=button, housing=housing)
 
 
 def snap_to_skin(slice2d, px, py, sx, sy, air=-300.0, max_steps=400):

@@ -16,15 +16,10 @@ authors:
     affiliation: "Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
     email: yamamoto.masayoshi.jx@teikyo-u.ac.jp
 version: "0.5.0"
-# All-versions ("concept") DOI: always resolves to the latest release.
-doi: "10.5281/zenodo.21328321"
-identifiers:
-  - type: doi
-    value: "10.5281/zenodo.21328321"
-    description: "Concept DOI (all versions)"
-  - type: doi
-    value: "10.5281/zenodo.21328322"
-    description: "DOI for version 0.4.50"
+# Zenodo の DOI はここに書かないこと。Zenodo は GitHub リリースを取り込むとき CITATION.cff を読み、
+# ここに書かれた DOI を新しい版レコードのDOIとして使おうとする。concept DOI は版レコードには
+# 割り当てられないので衝突し、取り込みが黙って失敗する（v0.5.0 の初回リリースで実際に起きた）。
+# DOI は Zenodo が発行する。人間向けの表示は README のバッジと引用例で行う。
 license: GPL-3.0-or-later
 repository-code: "https://github.com/breguetjp-gif/tips-ice-planner"
 keywords:

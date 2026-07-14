@@ -666,3 +666,41 @@ def test_surface_mode_switches_to_dedicated_probe_widget():
     d1 = QPointF(d0.x() + 12, d0.y())
     ctl.mouseMoveEvent(type("E", (), {"position": lambda self=None: d1})())
     assert got["theta"] is not None, "ダイヤルの左右ドラッグでRotate(theta)が変化するべき"
+
+
+def test_no_stray_top_level_windows():
+    """親を持たない遺物ウィジェットが、デスクトップに小さな窓として出てしまわないこと。
+
+    Qt では parent の無いウィジェットはトップレベルウィンドウになる。UIを Handle 方式に作り直した
+    ときの残骸（sProbe / lblProbe / probeFoot / probeHead ほか計12個）はどのレイアウトにも入って
+    おらず、_update_mode_ui() の setVisible(True) がそのまま "foot" "head" という小窓をデスクトップ
+    に出していた（先生報告・実機で4個確認）。非表示の親に付けて封じたことの回帰テスト。
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+    win = M.MainWindow()
+    win.show()
+    for mode in ("ice", "surface", "ice"):          # 窓が湧くのはモード切替の setVisible
+        win.viewMode = mode
+        win._update_mode_ui()
+        app.processEvents()
+
+    def describe(w):                               # f-string の中に lambda は書けない
+        text = w.text() if hasattr(w, "text") else ""
+        return "{}(text={!r})".format(w.__class__.__name__, text)
+
+    # 同じ pytest セッションの他テストが作った MainWindow も topLevelWidgets に残るので、
+    # 「MainWindow でないトップレベル窓」だけを迷子とみなす。
+    stray = [w for w in app.topLevelWidgets()
+             if not isinstance(w, M.MainWindow) and not w.isHidden()]
+    assert not stray, "MainWindow 以外のトップレベル窓が出ている: " + ", ".join(
+        describe(w) for w in stray)
+
+    orphans = [n for n in ("sTheta", "sProbe", "sB1", "sB2", "b1Val", "b2Val", "lblTheta",
+                           "lblProbe", "probeFoot", "probeHead", "lblAP", "lblLR")
+               if getattr(win, n).parent() is None]
+    assert not orphans, "親を持たないウィジェットが残っている（いつでも窓になり得る）: {}".format(orphans)

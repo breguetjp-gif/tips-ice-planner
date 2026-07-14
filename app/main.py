@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.1"                                            # 配布のたびに上げる
+VERSION = "0.5.2"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -951,6 +951,14 @@ class MainWindow(QMainWindow):
         self.lblProbe = self._acc("Probe", ja="プローブ前後")
         self.probeFoot = self._lbl("foot", "足側"); self.probeHead = self._lbl("head", "頭側")
         self.lblAP = self._acc("Deflect A/P"); self.lblLR = self._acc("Deflect L/R")
+        # 上の12個はどのレイアウトにも入れない。Qt では **親を持たないウィジェットはトップレベル
+        # ウィンドウになる** ので、_update_mode_ui() の setVisible(True) がそのままデスクトップに
+        # 小さな窓（"foot" / "head" / "Probe" / スライダ）を出していた。非表示の親に付けて封じる。
+        self._vestigial = QWidget(self); self._vestigial.hide()
+        for _w in (self.sTheta, self.sProbe, self.sB1, self.sB2, self.b1Val, self.b2Val,
+                   self.lblTheta, self.lblProbe, self.probeFoot, self.probeHead,
+                   self.lblAP, self.lblLR):
+            _w.setParent(self._vestigial)
         h.addWidget(self.handleCtl, 2)
         h.addWidget(self.surfCtl, 2)
         h.addWidget(self._btn("Zero deflect", self._zero_defl, ja="偏向ゼロ"))

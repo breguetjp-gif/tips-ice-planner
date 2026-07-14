@@ -337,15 +337,20 @@ def test_updater_apply_and_relaunch():
         finally:
             os.environ["PATH"] = old_path_env
 
+    # 完了の待ち条件は「ヘルパーが最後に書くログ行」にする。swapスクリプトの順序は
+    # 新bundle配置(MARKER_NEW出現) → .old削除 → ログ"OK"出力 なので、MARKER_NEWだけを
+    # 待つと .old 削除前に検証が走るレースになる（高負荷時に flaky）。ログ"OK"出現＝全工程完了。
     marker_new = os.path.join(old_app, "Contents", "MacOS", "MARKER_NEW")
-    for _ in range(100):                                      # バックグラウンドスクリプトの完了を待つ(最大5秒)
-        if os.path.exists(marker_new):
-            break
+    log_path = os.path.join(data_dir, "logs", "update.log")   # patch解除後もパスを直接組み立てて検証
+    log_text = ""
+    for _ in range(200):                                      # バックグラウンドスクリプトの完了を待つ(最大10秒)
+        if os.path.exists(log_path):
+            log_text = open(log_path, encoding="utf-8").read()
+            if "OK: swapped to new version" in log_text:
+                break
         time.sleep(0.05)
     assert os.path.exists(marker_new), "target app must contain the NEW marker after the swap actually runs"
     assert not os.path.exists(old_app + ".old"), "backup dir must be cleaned up after a successful swap"
-    log_path = os.path.join(data_dir, "logs", "update.log")   # patch解除後もパスを直接組み立てて検証
-    log_text = open(log_path, encoding="utf-8").read()
     assert "OK: swapped to new version" in log_text, f"swap must log success; log was:\n{log_text}"
     print("✅ updater apply_and_relaunch ok  (real swap script, logged, no silent abort)")
 

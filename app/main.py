@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "M. Yamamoto — IR physician, Japan"
-VERSION = "0.4.53"                                            # 配布のたびに上げる
+VERSION = "0.4.55"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # Mieleプラグイン→本アプリの橋渡し用URLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -388,8 +388,8 @@ class Pane3D(QWidget):
 
     def _draw_body(self, p, c, s, b):
         rgba = liver_core.render_ghost(self.body, self.az, self.el, c, s * self.zoom3d, b.width(), b.height(),
-                                       mode="haze", opacity=0.30, color=(214, 184, 170),   # 淡い皮膚色シェル
-                                       offset=(self.pan3d.x(), self.pan3d.y()))
+                                       mode="surface", opacity=0.96, color=(232, 193, 168),   # 陰影付き皮膚シェル(解剖図譜相当)
+                                       offset=(self.pan3d.x(), self.pan3d.y()), splat_rad=3)
         if rgba is None:
             return
         buf = np.ascontiguousarray(rgba); self._body_buf = buf

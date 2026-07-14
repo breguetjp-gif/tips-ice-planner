@@ -118,7 +118,7 @@ def _pack(m, dsx, dsy, ddz):
                 center=surf.mean(0).astype(np.float32), liters=liters)
 
 
-def body_surface(hu, sx, sy, dz, air=-300.0, ds=(3, 6, 6), cap=16000):
+def body_surface(hu, sx, sy, dz, air=-300.0, ds=(1, 4, 4), cap=45000):
     """CT全体の外郭(皮膚)を粗く抽出。経腹エコーの3D表示＆プローブ設置面に使う。
       返り値 dict(surf,nrm(外向き),interior,center,extent) or None。診断用途ではない粗いシェル。"""
     fz, fy, fx = ds
@@ -237,12 +237,13 @@ def _box_blur(a, r=2):
 
 
 def render_ghost(liver, az_deg, el_deg, center, scale, w, h,
-                 mode="haze", opacity=0.5, color=TERRA, offset=(0.0, 0.0)):
+                 mode="haze", opacity=0.5, color=TERRA, offset=(0.0, 0.0), splat_rad=2):
     """肝臓ゴーストを (h,w,4) uint8 RGBA(非乗算) で返す。Pane3D が drawImage で裏に敷く。
 
       mode='surface' : Zバッファ + 法線シェーディングの塗り（立体の影）
       mode='haze'    : 内部点の加算累積 + ぼかし（もや・半透明）
     center/scale は Pane3D が device 幾何で使う apex / s をそのまま渡す（位置整合のため）。
+    splat_rad: surfaceモードの点1つあたりの塗り半径(px)。点群が疎い対象(体表シェル等)は大きめにして隙間を防ぐ。
     """
     if liver is None or w < 4 or h < 4:
         return None
@@ -255,7 +256,7 @@ def render_ghost(liver, az_deg, el_deg, center, scale, w, h,
         u, v, depth = _project(pts, az_deg, el_deg, center, scale, w, h, offset)
         light = np.array([0.4, -0.5, 0.75]); light /= np.linalg.norm(light)
         shade = np.clip(nrm @ light, 0, 1) * 0.75 + 0.25
-        rad = 2
+        rad = max(1, int(splat_rad))
         oy, ox = np.mgrid[-rad:rad + 1, -rad:rad + 1]
         offs = [(int(dy), int(dx)) for dy, dx in zip(oy.ravel(), ox.ravel())]
         # 遠い順に書く（後勝ち＝手前が上書き）。スプラットは近傍へ複製。

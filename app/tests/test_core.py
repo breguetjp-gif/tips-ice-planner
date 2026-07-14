@@ -205,6 +205,68 @@ def test_liver():
     print("✅ liver estimate/render ok  (L=%.2f surf=%d)" % (L["liters"], len(L["surf"])))
 
 
+def test_body_surface_shell():
+    """体表シェル: ①CT寝台を拾わない ②撮影範囲の端（上下の切断面）を面として閉じる
+       ③点がボクセル格子に量子化されていない（サブボクセル）④法線が mm 空間で正しい向き。
+
+    ①②を落とすと 3D は「中が丸見えの筒＋宙に浮いた板」になり、③を落とすと腹壁に等高線状の
+    縞が出る。④は体表を掴んだときのプローブの向き（体内向き法線）に直接効く。
+    """
+    from tips_core import liver
+    nz, H, W = 30, 90, 90
+    sx = sy = 1.0; dz = 3.0                                  # 面内1mm / スライス3mm＝異方性
+    vol = np.full((nz, H, W), -1000.0, np.float32)           # 空気
+    zz, yy, xx = np.ogrid[:nz, :H, :W]
+    r = np.sqrt((yy - 40) ** 2 + (xx - 45) ** 2)             # z方向に一様な太い円柱＝体幹
+    vol[np.broadcast_to(r <= 28, vol.shape)] = 40.0
+    vol[:, 74:77, 20:70] = 60.0                              # 体幹から離れた薄い板＝CT寝台
+
+    b = liver.body_surface(vol, sx, sy, dz, ds=(1, 1, 1))
+    assert b is not None and len(b["surf"]) > 500
+    pts = b["surf"]
+
+    # ① 寝台(y≈75mm)の点を拾っていない。体幹の背側の縁は y=68mm までしか無い
+    assert int((pts[:, 1] > 71.0).sum()) == 0, "CT寝台が体表シェルに混入している"
+
+    # ② 撮影範囲の端が「面」として閉じている。円柱の外周(r=28mm)ではなく、切断面の **内側**
+    #    （r<20mm）に点が要る。外周リングだけなら筒のままで、3Dで中が丸見えになる
+    zmm = pts[:, 2]
+    rr = np.hypot(pts[:, 0] - 45.0, pts[:, 1] - 40.0)
+    for lab, sel in (("先頭", zmm < dz * 0.6), ("末尾", zmm > (nz - 1) * dz - dz * 0.6)):
+        assert int((sel & (rr < 20.0)).sum()) > 50, f"{lab}スライスの切断面が閉じていない（筒抜け）"
+
+    # ③ サブボクセル: 点が格子(1mm)にぴったり乗っていない＝深度が階段にならない
+    frac = np.abs(pts[:, 0] / sx - np.round(pts[:, 0] / sx))
+    assert float(frac.max()) > 0.05, "表面点がボクセル格子のまま＝深度が階段になり縞が出る"
+
+    # 描画: 内側に穴が空かないこと（点群のまま撒くと虫食いになる）
+    c = b["center"]; scale = 200.0 / (b["extent"] * 1.2)
+    rgba = liver.render_ghost(b, 0.0, -75.0, c, scale, 200, 200, mode="surface", opacity=0.97)
+    a = rgba[..., 3]
+    op = a > 200
+    lr = np.maximum.accumulate(op, 1) & np.maximum.accumulate(op[:, ::-1], 1)[:, ::-1]
+    ud = np.maximum.accumulate(op, 0) & np.maximum.accumulate(op[::-1], 0)[::-1]
+    holes = int(((a < 40) & lr & ud).sum())
+    assert op.sum() > 2000 and holes == 0, f"体表の面に穴がある ({holes}px)"
+
+    # ④ 法線は **mm 空間** の外向き単位ベクトル。異方性ボクセル(面内1mm/スライス3mm)で
+    #    index 空間の勾配のまま出すと z 成分が3倍に効き、斜めの面で向きが狂う。
+    #    体表を掴んだときのプローブの向き（体内向き法線）がこれなので、狂うと撮像面が傾く。
+    sph = np.full((nz, H, W), -1000.0, np.float32)
+    cz, cy, cx = 19.5, 42.0, 45.0                            # index / mm 中心 = (45,42,58.5)mm
+    dmm = np.sqrt(((zz - cz) * dz) ** 2 + ((yy - cy) * sy) ** 2 + ((xx - cx) * sx) ** 2)
+    sph[dmm <= 30.0] = 40.0                                  # 半径30mm の真球（mm空間で等方）
+    bs = liver.body_surface(sph, sx, sy, dz, ds=(1, 1, 1))
+    P, N = bs["surf"], bs["nrm"]
+    radial = P - np.array([cx * sx, cy * sy, cz * dz], np.float32)
+    radial /= np.linalg.norm(radial, axis=1, keepdims=True)
+    dot = np.einsum("ij,ij->i", N, radial)
+    assert float(np.median(dot)) > 0.97, \
+        f"球の法線が半径方向を向いていない (median={np.median(dot):.3f}) — 勾配を mm に直していない"
+    print("✅ body surface ok  (pts=%d spacing=%.1fmm 穴=0 法線dot=%.3f)"
+          % (len(pts), b["spacing"], float(np.median(dot))))
+
+
 def test_features():
     """新機能の核: aim_readout(方位/距離) / surface_geometry(凸扇) / snap_to_skin / ice_image r0後方互換。"""
     # --- aim_readout: 標準axial orient（恒等 index→LPS: +x=L,+y=背側,+z=頭側）---

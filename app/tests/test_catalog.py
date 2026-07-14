@@ -758,3 +758,79 @@ def test_ivc_path_hidden_in_transabdominal_mode():
             "血管内モードで IVC 経路が描かれていない（消しすぎ）"
     finally:
         win._stop_workers()
+
+
+def test_probe_drawn_on_all_three_planes():
+    """経腹モードのプローブを Axial / Coronal / Sagittal の3断面すべてに描くこと（先生指示）。
+
+    以前はプローブを置いた断面にしか実物を描かず、他の2断面は水色の点だけだった。プローブが
+    どちらを向いているかが1断面でしか読めない。probe_glyph は world mm の3D点列なので、
+    どの断面にも同じように投影できる。
+
+    測り方: 扇（黄色いゴースト）はプローブを置いた時点で一緒に出るので、単純に「置く前／置いた後」の
+    差分を数えると扇に飲まれてプローブ本体を測れない。そこで probe_glyph を一時的に潰した
+    （面積ゼロの）描画と比べ、**プローブ本体だけ**の画素を数える。あわせて「どの断面に置いたか」で
+    絵が変わらないこと＝置いた断面に依存しないことも確かめる（旧実装はここで必ず変わった）。
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+    import dicom_io
+    import glob
+    from PIL import Image
+
+    files = sorted(glob.glob(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "sample_data", "HCC048_portal_venous", "*.dcm")))
+    if not files:
+        return                                   # 同梱CTが無いクローンではスキップ
+
+    win = M.MainWindow(); win.resize(1200, 800)
+    real_glyph = M.core.probe_glyph
+    try:
+        win.current_study_uid = "t"; win._current_files = list(files)
+        win._on_series_loaded(dicom_io.load_series_files(files))
+        for _ in range(3):
+            app.processEvents()
+        win.show_liver = False                   # 肝抽出ワーカーを走らせない
+        win.viewMode = "surface"; win._update_mode_ui()
+        win.contact = np.array([228.0, 79.0, 180.0])          # 右季肋部の皮膚
+        win.normal = np.array([-0.17, 0.96, -0.24])           # 体内向き（背側やや左）
+
+        def render():
+            win._refresh()
+            for _ in range(3):
+                app.processEvents()
+            out = []
+            for pane in (win.ax, win.cor, win.sag):
+                pane.grab().save("/tmp/_probe_test.png")
+                out.append(np.array(Image.open("/tmp/_probe_test.png").convert("RGB"), dtype=int))
+            return out
+
+        def flat_glyph(g, **kw):                              # 面積ゼロ＝プローブ本体だけ消える
+            c = np.asarray(g["Tp"], float)
+            return dict(face=np.array([c, c]), array=np.array([c, c, c]),
+                        outline=np.array([c, c, c]), button=c, housing=np.array([c, c, c, c]))
+
+        names = ("Axial", "Coronal", "Sagittal")
+        # プローブをどこに置いたか（3D 自由設置 / Axial 上 / Coronal 上）を変えても、
+        # 3断面すべてにプローブ本体が出ること。旧実装は「置いた断面」以外が 0px になる。
+        for sp in (-1, 0, 1):
+            win.surfPlane = sp
+            M.core.probe_glyph = flat_glyph
+            without = render()
+            M.core.probe_glyph = real_glyph
+            with_probe = render()
+            for i, nm in enumerate(names):
+                body = int((np.abs(without[i] - with_probe[i]) > 12).sum())
+                # Axial は撮像面をほぼ真横から見るので投影が細い。0 と有意に区別できればよい
+                assert body > 150, \
+                    f"surfPlane={sp} のとき {nm} にプローブ本体が描かれていない (本体の画素 {body})"
+        print("✅ probe drawn on all three planes ok")
+    finally:
+        M.core.probe_glyph = real_glyph
+        win._stop_workers()

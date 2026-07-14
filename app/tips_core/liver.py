@@ -75,25 +75,43 @@ def _fill_inplane_holes(m, max_iter=200):
 
 
 def _surface_points(m, dsx, dsy, ddz, cap=20000, seed=0):
-    """マスク表面ボクセル → mm 点群と外向き法線（平滑占有率の勾配）。"""
+    """マスク表面ボクセル → mm 点群と外向き法線（平滑占有率の勾配）。
+
+    収縮の前に外周を1ボクセル分「空」で囲う。囲わないと、配列の端に接したボクセルは
+    「端の外も中身」と見なされて収縮に残り、**表面と判定されない**。上腹部だけを撮った CT では
+    最初と最後のスライスが体の切断面になるので、これを表面に入れないと 3D が
+    上下の抜けた筒（中が丸見え）になる。実際そう見えていた。"""
     occ = m.astype(np.float32)
-    for _ in range(3):             # 6近傍平均で平滑化（法線を滑らかに）
-        occ = (occ + np.roll(occ, 1, 0) + np.roll(occ, -1, 0)
-               + np.roll(occ, 1, 1) + np.roll(occ, -1, 1)
-               + np.roll(occ, 1, 2) + np.roll(occ, -1, 2)) / 7.0
-    surf = m & ~_ero6(m)
+    for _ in range(3):             # 6近傍平均で平滑化（法線を滑らかに）。
+        a = occ.copy()             # np.roll は毎回フル複製を作る。スライス加算なら一時配列は1本で済む
+        a[1:] += occ[:-1]; a[:-1] += occ[1:]
+        a[:, 1:] += occ[:, :-1]; a[:, :-1] += occ[:, 1:]
+        a[:, :, 1:] += occ[:, :, :-1]; a[:, :, :-1] += occ[:, :, 1:]
+        occ = a / 7.0
+    surf = m & ~_ero6(np.pad(m, 1))[1:-1, 1:-1, 1:-1]
     zi, yi, xi = np.where(surf)
     if len(zi) == 0:
         return None, None
-    gz, gy, gx = np.gradient(occ)
-    nl = np.stack([gx[zi, yi, xi], gy[zi, yi, xi], gz[zi, yi, xi]], 1)
-    nrm = np.linalg.norm(nl, axis=1, keepdims=True); nrm[nrm < 1e-6] = 1.0
-    nl = (-nl / nrm).astype(np.float32)                  # 勾配は内向き→反転で外向き
+    # 勾配は「index あたり」で出るので mm に直す。ボクセルは異方性（面内 0.7mm / スライス間 2.5mm）で、
+    # 直さないと法線が z 方向に潰れる。3D の陰影だけでなく、体表点を掴んだときのプローブの向き
+    # （体内向き法線）もこの値を使っているので、単位を揃えないと向きが狂う。
+    # 軸ごとに作って即座に表面ボクセルだけ抜く（3軸まとめて持つとボリューム3本分のメモリを食う）。
+    gmm = np.stack([np.gradient(occ, axis=2)[zi, yi, xi] / dsx,
+                    np.gradient(occ, axis=1)[zi, yi, xi] / dsy,
+                    np.gradient(occ, axis=0)[zi, yi, xi] / ddz], 1)
+    mag = np.linalg.norm(gmm, axis=1, keepdims=True); mag[mag < 1e-9] = 1e-9
+    nl = (-gmm / mag).astype(np.float32)                 # 勾配は内向き→反転で外向き（mm空間の単位ベクトル）
     pts = np.column_stack([xi * dsx, yi * dsy, zi * ddz]).astype(np.float32)
+    # サブボクセル補正：点をボクセル中心のまま使うと表面が格子に量子化され、深度が階段になる。
+    # そこから法線を作ると段差が等高線の縞（指紋のような輪）として見える。実際そう見えていた。
+    # 平滑占有率 occ の 0.5 等値面まで法線方向に押し出して、点を連続な面の上に乗せる。
+    t = (occ[zi, yi, xi] - 0.5) / mag[:, 0]              # 等値面までの符号付き距離(mm・正=内側)
+    lim = 2.0 * float(max(dsx, dsy, ddz))
+    pts = pts + nl * np.clip(t, -lim, lim)[:, None]      # 外向き(nl)へ t だけ動かす
     if len(pts) > cap:
         idx = np.random.RandomState(seed).choice(len(pts), cap, replace=False)
         pts, nl = pts[idx], nl[idx]
-    return pts, nl
+    return pts.astype(np.float32), nl
 
 
 def _interior_points(m, dsx, dsy, ddz, cap=28000, seed=1):
@@ -115,25 +133,47 @@ def _pack(m, dsx, dsy, ddz):
     inter = _interior_points(m, dsx, dsy, ddz)
     liters = float(m.sum()) * dsx * dsy * ddz / 1e6
     return dict(surf=surf, nrm=nrm, interior=inter,
-                center=surf.mean(0).astype(np.float32), liters=liters)
+                center=surf.mean(0).astype(np.float32), liters=liters,
+                spacing=float(max(dsx, dsy, ddz)))
 
 
-def body_surface(hu, sx, sy, dz, air=-300.0, ds=(1, 4, 4), cap=45000):
+def body_surface(hu, sx, sy, dz, air=-300.0, ds=None, cap=160000):
     """CT全体の外郭(皮膚)を粗く抽出。経腹エコーの3D表示＆プローブ設置面に使う。
-      返り値 dict(surf,nrm(外向き),interior,center,extent) or None。診断用途ではない粗いシェル。"""
+      返り値 dict(surf,nrm(外向き),interior,center,extent,spacing) or None。診断用途ではない粗いシェル。
+
+    面内は 1/2 間引きが基本（従来は一律 1/4）。表面の見た目は点群の密度で決まるので、ここをケチると
+    後段でいくら滑らかにしても輪郭が痩せる。ただしスライス数の多い CT では作業配列が肥大するので、
+    800万ボクセルに収まるところまで自動で間引きを強める。読み込み時の背景処理なので体感には出ない。
+    spacing = 隣り合う表面点の最大間隔(mm)。描画側がスプラット半径をこれから決める。"""
+    if ds is None:
+        f = 2
+        while hu.size / float(f * f) > 8e6 and f < 5:
+            f += 1
+        ds = (1, f, f)
     fz, fy, fx = ds
     d = np.ascontiguousarray(hu[::fz, ::fy, ::fx]).astype(np.float32)
     m = d > air
     if int(m.sum()) < 100:
         return None
     m = _fill_inplane_holes(m)                     # 肺/腸管などの内部空気を埋め、外郭(皮膚)だけ残す
+    # CT の寝台とマットは体幹の背側に「薄い弧」として写り、-300HU より濃いのでマスクに入ってしまう。
+    # 3D では体から浮いた板になって見え、経腹プローブを置く面と紛らわしい。面内オープニング
+    # （収縮→膨張）で薄いものだけを消す：弧は数ボクセル厚なので消え、体幹は厚いので残る。
+    op = m
+    for _ in range(3):
+        op = _ero4(op)
+    for _ in range(3):
+        op = _dil4(op)
+    if int(op.sum()) > int(m.sum()) * 0.5:         # 体幹が残っていることを確認してから採用
+        m = op & m
     dsx, dsy, ddz = sx * fx, sy * fy, dz * fz
     surf, nl = _surface_points(m, dsx, dsy, ddz, cap=cap, seed=3)
     if surf is None:
         return None
     ext = float(np.linalg.norm(surf.max(0) - surf.min(0)))
     return dict(surf=surf, nrm=nl, interior=surf,
-                center=surf.mean(0).astype(np.float32), extent=ext)
+                center=surf.mean(0).astype(np.float32), extent=ext,
+                spacing=float(max(dsx, dsy, ddz)))
 
 
 def estimate(hu, path, sx, sy, dz, tip_high_z=True, ds=(2, 4, 4)):
@@ -236,50 +276,192 @@ def _box_blur(a, r=2):
     return a
 
 
+# ---- スクリーン空間サーフェス（Zバッファ → 穴埋め → 平滑 → 深度勾配から法線 → 陰影）----
+#
+# 以前は「点をそのまま四角く撒いて、点ごとに持たせた法線で色を塗る」点群スプラットだった。
+# 粒々に見えていた理由は3つで、どれも塗り方の問題ではなく **法線と輪郭の作り方** の問題:
+#   1. 点ごとの法線は 2値マスクの粗い格子から出しており、隣の点と向きが飛ぶ → 面がザラつく
+#   2. 点が疎いと隙間が空き、四角いスプラットで埋めるので四角い粒が見える
+#   3. 深度を平滑化していないので、輪郭が階段状になる
+# そこで「点は深度バッファを作るためだけに使い、色は画面（=深度画像）から作る」方式に変えた。
+# ゲームの deferred shading と同じ考え方で、法線は平滑化した深度の勾配から求める。純 numpy のみ。
+
+def _dil2(m, r=1):                 # 2D 4近傍膨張
+    a = m.copy()
+    for _ in range(r):
+        b = a.copy()
+        b[1:] |= a[:-1]; b[:-1] |= a[1:]
+        b[:, 1:] |= a[:, :-1]; b[:, :-1] |= a[:, 1:]
+        a = b
+    return a
+
+
+def _close2(m, r=1):               # 膨張→収縮＝内側の穴だけ塞ぎ、外形はほぼ元のまま
+    return ~_dil2(~_dil2(m, r), r)
+
+
+def _blur_masked(a, m, r):
+    """有効画素だけで平均するボックス平滑（normalized convolution）。
+    無効画素を 0 として混ぜると縁が黒く沈むので、重みで割り戻す。"""
+    if r < 1:
+        return a
+    mf = m.astype(np.float32)
+    num = _box_blur(np.where(m, a, 0.0).astype(np.float32), r)
+    den = _box_blur(mf, r)
+    return np.where(den > 1e-6, num / np.maximum(den, 1e-6), a).astype(np.float32)
+
+
+def _smooth_depth(dep, solid, r=3, edge_mm=8.0):
+    """深度の平滑化。ただし『崖』はまたがない（1回だけのバイラテラル）。
+    撮影範囲の端＝体の切断面では深度が数十mm一気に落ちる。素直に平均すると崖が斜面に化け、
+    そこから作った法線が視線と直交して縁が黒くギザギザになる。平均から大きく外れる画素は
+    平均の材料から外し、生値のまま残す＝崖は崖のまま、なめらかな所だけなめらかにする。"""
+    b = _blur_masked(dep, solid, r)
+    near = solid & (np.abs(dep - b) < edge_mm)
+    if not near.any():
+        return b
+    return np.where(near, _blur_masked(dep, near, r), dep).astype(np.float32)
+
+
+def _pyr_fill(a, m, levels=7):
+    """穴あき深度バッファをピラミッド(push-pull)で滑らかに補間して埋める。
+    点群が疎いと Zバッファは虫食いになる。近傍コピーで埋めるとブロックが残るので、
+    粗い階層まで畳んでから戻し、欠けた画素だけ上の階層の値で埋める。O(N)。"""
+    ds = [np.where(m, a, 0.0).astype(np.float32)]
+    ws = [m.astype(np.float32)]
+    for _ in range(levels):
+        A, W = ds[-1], ws[-1]
+        H0, W0 = A.shape
+        if H0 < 4 or W0 < 4:
+            break
+        h2, w2 = H0 // 2 * 2, W0 // 2 * 2
+        aw = (A[:h2, :w2] * W[:h2, :w2]).reshape(h2 // 2, 2, w2 // 2, 2).sum((1, 3))
+        ww = W[:h2, :w2].reshape(h2 // 2, 2, w2 // 2, 2).sum((1, 3))
+        ds.append(np.where(ww > 0, aw / np.maximum(ww, 1e-6), 0.0).astype(np.float32))
+        ws.append(np.minimum(ww, 1.0).astype(np.float32))
+    for i in range(len(ds) - 1, 0, -1):
+        H0, W0 = ds[i - 1].shape
+        up = np.repeat(np.repeat(ds[i], 2, 0), 2, 1)
+        uw = np.repeat(np.repeat(ws[i], 2, 0), 2, 1)
+        pad = ((0, max(0, H0 - up.shape[0])), (0, max(0, W0 - up.shape[1])))
+        up = np.pad(up, pad, mode="edge")[:H0, :W0]
+        uw = np.pad(uw, pad, mode="edge")[:H0, :W0]
+        hole = ws[i - 1] < 0.5
+        ds[i - 1] = np.where(hole, up, ds[i - 1])
+        ws[i - 1] = np.where(hole, uw, ws[i - 1])
+    return ds[0]
+
+
+def _render_surface(liver, az_deg, el_deg, center, scale, w, h, opacity, color, offset, splat_rad, ss=2):
+    pts = liver.get("surf")
+    if pts is None:
+        return None
+    ss = max(1, int(ss))
+    W, H = w * ss, h * ss
+    u, v, depth = _project(pts, az_deg, el_deg, center, scale * ss, W, H,
+                           (offset[0] * ss, offset[1] * ss))
+
+    # --- 1) Zバッファ（高解像側で作る＝輪郭のギザギザはここで決まる）
+    #     点は「遠い順」に並べる。同じ画素に重なった点は最後（=最も手前）が勝つので、
+    #     np.maximum との代入ひとつで正しい Z テストになる（重複indexでも後勝ちが最大値）。
+    # 塗り半径は「隣り合う点の画面上の間隔」の半分あれば足りる。大きくすると Zバッファ書き込みが
+    # 半径の2乗で重くなるので、残った隙間は後段（クロージング＋ピラミッド補間）に任せるほうが速くて滑らか。
+    spacing = float(liver.get("spacing", 0.0))
+    if spacing > 0:
+        rad = int(np.clip(np.ceil(spacing * scale * ss * 0.45), 1, 10))
+    else:
+        rad = max(1, int(round(splat_rad * ss)))
+    order = np.argsort(depth)
+    au, av, ad = u[order], v[order], depth[order]
+    zb = np.full(H * W, -1e18, np.float32)
+    for dy in range(-rad, rad + 1):
+        for dx in range(-rad, rad + 1):
+            if dx * dx + dy * dy > rad * rad + rad:   # 丸いスプラット（四角い粒を出さない）
+                continue
+            uu = au + dx; vv = av + dy
+            ok = (uu >= 0) & (uu < W) & (vv >= 0) & (vv < H)
+            ii = vv[ok] * W + uu[ok]
+            zb[ii] = np.maximum(zb[ii], ad[ok])
+    zb = zb.reshape(H, W)
+    cov = zb > -1e17
+    if not cov.any():
+        return None
+
+    # --- 2) アルファは高解像の被覆から作り、平均で落として輪郭をアンチエイリアス
+    alpha_hi = _close2(cov, rad + 1).astype(np.float32)       # 点の隙間を閉じて 1枚の面にする
+    alpha = alpha_hi.reshape(h, ss, w, ss).mean((1, 3)) if ss > 1 else alpha_hi
+
+    # --- 3) 陰影計算は等倍で（画素数が 1/ss² になり十分速い）。深度は最大値プーリング＝手前の面を採る
+    if ss > 1:
+        dep = zb.reshape(h, ss, w, ss).max((1, 3))
+    else:
+        dep = zb
+    solid = _close2(dep > -1e17, max(2, rad // ss + 2))       # 内部の虫食いを塞ぐ
+    if not solid.any():
+        return None
+    dep = _pyr_fill(dep, dep > -1e17)                         # 虫食いを滑らかに補間
+    dep = _smooth_depth(dep, solid, r=3)                      # 階段を均す（法線の質はここで決まる。崖は保つ）
+
+    # --- 4) 法線＝平滑化した深度の勾配（視空間 x右 / y上 / z手前）
+    #     u=x*s, v=-y*s, depth=z(mm) より n ∝ (-∂D/∂u·s, +∂D/∂v·s, 1)
+    s_eff = float(scale)
+    gv, gu = np.gradient(dep)
+    nx = -gu * s_eff; ny = gv * s_eff; nz = np.ones_like(dep)
+    # 撮影範囲の端（切断面）では深度が崖のように落ちる。傾きをそのまま使うと法線が視線と直交して
+    # 真っ黒な線になり、輪郭に沿って黒いギザギザが出る。傾きに上限を設けて「急だが照らされた面」にする。
+    np.clip(nx, -4.0, 4.0, out=nx); np.clip(ny, -4.0, 4.0, out=ny)
+    ln = np.sqrt(nx * nx + ny * ny + nz * nz); ln[ln < 1e-6] = 1.0
+    nx /= ln; ny /= ln; nz /= ln
+
+    # --- 5) 陰影：拡散(半ランバート)＋環境遮蔽＋リムライト＋弱い鏡面＋奥行きの暗さ
+    lig = np.array([-0.38, 0.46, 0.80], np.float32); lig /= np.linalg.norm(lig)
+    ndl = nx * lig[0] + ny * lig[1] + nz * lig[2]
+    lam = np.clip(ndl, 0.0, 1.0)
+    wrap = np.clip(ndl * 0.5 + 0.5, 0.0, 1.0) ** 1.4          # 半ランバート＝解剖図譜の柔らかい陰
+    diff = 0.34 * lam + 0.52 * wrap
+
+    coarse = _blur_masked(dep, solid, r=max(4, int(0.06 * min(w, h))))
+    ridge = np.clip((dep - coarse) / 9.0, -1.0, 1.0)          # +1=尾根 / -1=谷（肋弓・臍・鼠径のくぼみ）
+    ao = np.clip(0.80 + 0.30 * ridge, 0.50, 1.06)
+
+    hv = lig + np.array([0.0, 0.0, 1.0], np.float32); hv /= np.linalg.norm(hv)
+    spec = np.clip(nx * hv[0] + ny * hv[1] + nz * hv[2], 0.0, 1.0) ** 30.0 * 0.14
+    rim = np.clip(1.0 - nz, 0.0, 1.0) ** 5.0 * 0.16           # 輪郭がふわっと立ち上がる＝立体に見える決め手
+    #   ↑ 強くすると切断面（撮影範囲の端）の縁が白く光ってケーキのように見えるので控えめに
+
+    dv = dep[solid]
+    lo, hi = float(dv.min()), float(dv.max())
+    cue = 0.80 + 0.20 * np.clip((dep - lo) / max(hi - lo, 1e-3), 0.0, 1.0)   # 奥は沈ませる
+
+    col = np.array(color, np.float32)
+    shade = (0.26 + diff) * ao * cue
+    rgb = col[None, None, :] * shade[..., None]
+    rgb += 255.0 * spec[..., None]
+    rgb += rim[..., None] * np.array([255.0, 232.0, 214.0], np.float32)[None, None, :]
+    rgb = np.clip(rgb, 0, 255)
+
+    out = np.zeros((h, w, 4), np.uint8)
+    out[..., :3] = rgb.astype(np.uint8)
+    out[..., 3] = (np.clip(alpha, 0, 1) * float(np.clip(opacity, 0, 1)) * 255).astype(np.uint8)
+    return out
+
+
 def render_ghost(liver, az_deg, el_deg, center, scale, w, h,
-                 mode="haze", opacity=0.5, color=TERRA, offset=(0.0, 0.0), splat_rad=2):
+                 mode="haze", opacity=0.5, color=TERRA, offset=(0.0, 0.0), splat_rad=2, ss=2):
     """肝臓ゴーストを (h,w,4) uint8 RGBA(非乗算) で返す。Pane3D が drawImage で裏に敷く。
 
-      mode='surface' : Zバッファ + 法線シェーディングの塗り（立体の影）
+      mode='surface' : スクリーン空間の面レンダリング（Zバッファ→穴埋め→法線→陰影）
       mode='haze'    : 内部点の加算累積 + ぼかし（もや・半透明）
     center/scale は Pane3D が device 幾何で使う apex / s をそのまま渡す（位置整合のため）。
-    splat_rad: surfaceモードの点1つあたりの塗り半径(px)。点群が疎い対象(体表シェル等)は大きめにして隙間を防ぐ。
+    splat_rad: 点1つあたりの塗り半径(px)。liver dict に 'spacing'(mm) があればそちらから自動決定。
+    ss: 超解像倍率。輪郭のアンチエイリアスに効く。回転ドラッグ中など速度優先なら 1。
     """
     if liver is None or w < 4 or h < 4:
         return None
-    out = np.zeros((h, w, 4), np.uint8)
-    col = np.array(color, np.float32)
     if mode == "surface":
-        pts, nrm = liver.get("surf"), liver.get("nrm")
-        if pts is None:
-            return None
-        u, v, depth = _project(pts, az_deg, el_deg, center, scale, w, h, offset)
-        light = np.array([0.4, -0.5, 0.75]); light /= np.linalg.norm(light)
-        shade = np.clip(nrm @ light, 0, 1) * 0.75 + 0.25
-        rad = max(1, int(splat_rad))
-        oy, ox = np.mgrid[-rad:rad + 1, -rad:rad + 1]
-        offs = [(int(dy), int(dx)) for dy, dx in zip(oy.ravel(), ox.ravel())]
-        # 遠い順に書く（後勝ち＝手前が上書き）。スプラットは近傍へ複製。
-        order = np.argsort(depth)
-        zbuf = np.full((h, w), -1e18, np.float32)
-        au = u[order]; av = v[order]; ad = depth[order]; ash = shade[order]
-        a8 = int(np.clip(opacity, 0, 1) * 255)
-        for dy, dx in offs:
-            uu = au + dx; vv = av + dy
-            ok = (uu >= 0) & (uu < w) & (vv >= 0) & (vv < h)
-            ii = vv[ok] * w + uu[ok]
-            dd = ad[ok]
-            # フラット index に対し「より手前(depth大)なら更新」をベクトル化
-            flat_z = zbuf.ravel()
-            better = dd > flat_z[ii]
-            ii2 = ii[better]
-            flat_z[ii2] = dd[better]
-            sh = ash[ok][better]
-            rgb = (col[None, :] * sh[:, None]).astype(np.uint8)
-            fo = out.reshape(-1, 4)
-            fo[ii2, 0] = rgb[:, 0]; fo[ii2, 1] = rgb[:, 1]; fo[ii2, 2] = rgb[:, 2]
-            fo[ii2, 3] = a8
-        return out
+        return _render_surface(liver, az_deg, el_deg, center, scale, w, h,
+                               opacity, color, offset, splat_rad, ss)
+    out = np.zeros((h, w, 4), np.uint8)
     # ---- haze ----
     pts = liver.get("interior")
     if pts is None:

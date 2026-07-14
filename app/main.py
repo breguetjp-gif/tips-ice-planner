@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.3"                                            # 配布のたびに上げる
+VERSION = "0.5.4"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -331,7 +331,8 @@ class Pane3D(QWidget):
         w, h = b.width(), b.height()
         rgba = liver_core.render_ghost(self.liver, self.az, self.el, c, s * self.zoom3d, w, h,
                                        mode=self.liver_mode, opacity=self.liver_opacity,
-                                       offset=(self.pan3d.x(), self.pan3d.y()))
+                                       offset=(self.pan3d.x(), self.pan3d.y()),
+                                       ss=1 if self._last is not None else 2)   # ドラッグ中は速度優先
         if rgba is None:
             return
         buf = np.ascontiguousarray(rgba)
@@ -390,13 +391,23 @@ class Pane3D(QWidget):
         return c, s
 
     def _draw_body(self, p, c, s, b):
-        rgba = liver_core.render_ghost(self.body, self.az, self.el, c, s * self.zoom3d, b.width(), b.height(),
-                                       mode="surface", opacity=0.96, color=(232, 193, 168),   # 陰影付き皮膚シェル(解剖図譜相当)
-                                       offset=(self.pan3d.x(), self.pan3d.y()), splat_rad=3)
-        if rgba is None:
-            return
-        buf = np.ascontiguousarray(rgba); self._body_buf = buf
-        self._body_qimg = QImage(buf.data, b.width(), b.height(), 4 * b.width(), QImage.Format_RGBA8888)
+        """体表シェル（陰影付きの皮膚＝解剖図譜相当）。
+        視点・ズーム・パン・ペイン寸法が変わらなければ描き直さない：paintEvent は針を動かしても
+        走るので、毎回フルレンダリングすると無駄に重い。回転ドラッグ中だけ超解像を切って速度を優先し、
+        指を離した瞬間に高画質で描き直す。"""
+        w, h = b.width(), b.height()
+        ss = 1 if self._last is not None else 2              # ドラッグ中=速度 / 静止=画質
+        key = (id(self.body), round(self.az, 2), round(self.el, 2), round(self.zoom3d, 4),
+               round(self.pan3d.x(), 1), round(self.pan3d.y(), 1), w, h, ss)
+        if key != getattr(self, "_body_ckey", None) or getattr(self, "_body_qimg", None) is None:
+            rgba = liver_core.render_ghost(self.body, self.az, self.el, c, s * self.zoom3d, w, h,
+                                           mode="surface", opacity=0.97, color=(234, 197, 173),
+                                           offset=(self.pan3d.x(), self.pan3d.y()), ss=ss)
+            if rgba is None:
+                return
+            self._body_buf = np.ascontiguousarray(rgba)      # drawImage 中の GC を防ぐ
+            self._body_qimg = QImage(self._body_buf.data, w, h, 4 * w, QImage.Format_RGBA8888)
+            self._body_ckey = key
         p.drawImage(0, 0, self._body_qimg)
 
     def _pick_body(self, pos, c, s, b, radius=18.0, nearest=False):
@@ -520,8 +531,9 @@ class Pane3D(QWidget):
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.RightButton and not getattr(self, "_moved", False):   # 右クリック=ズームリセット
-            self.zoom3d = 1.0; self.pan3d = QPointF(0, 0); self.update()
+            self.zoom3d = 1.0; self.pan3d = QPointF(0, 0)
         self._last = None; self._moving_probe = False
+        self.update()                                        # 指を離した＝体表を高画質(超解像)で描き直す
 
     def wheelEvent(self, e):
         dy = e.angleDelta().y()
@@ -2140,17 +2152,28 @@ class MainWindow(QMainWindow):
             # 上に重なって隠してしまわないようにする（先生報告「実際の針が描画できていない」の原因）。
             self._draw_catheter_body(p, to_widget, v, plane, nz)
         if self.viewMode == "surface" and self.contact is not None:   # 経腹プローブ（コンベックス形状）
-            if g is not None and plane == self.surfPlane:              # 置いた断面＝プローブを実物形状で描く（3D/下部モックと同じ実機風）
+            # プローブは Axial / Coronal / Sagittal の **3断面すべて** に描く（先生指示 2026-07-14）。
+            # 以前は置いた断面にしか実体を描かず、他の2断面では水色の点しか出なかったので、
+            # 「どちらを向いているか」が置いた断面でしか読めなかった。probe_glyph は world mm の
+            # 3D 点列なので、proj_mm でどの断面にも同じように投影できる。
+            # 現在スライスから外れている断面では淡く描く（Entry/Target の強調規則と同じ考え方）。
+            if g is not None:
                 gl = core.probe_glyph(g)
                 _pm = lambda P: to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz))
-                out = QPolygonF([_pm(P) for P in gl["outline"]])
-                p.setBrush(QColor(201, 210, 221, 150)); p.setPen(QPen(QColor(120, 132, 150), 2)); p.drawPolygon(out)   # 白い筐体
-                ar = QPolygonF([_pm(P) for P in gl["array"]])
-                p.setBrush(QColor(80, 146, 196, 220)); p.setPen(QPen(QColor(42, 90, 138), 1.5)); p.drawPolygon(ar)     # 青いアレイ凸面
-                p.setBrush(QColor(120, 172, 212)); p.setPen(QPen(QColor(120, 132, 150), 1)); p.drawEllipse(_pm(gl["button"]), 3, 3)
-            else:                                                     # 他断面＝位置のドット
-                cc, rr = core.proj_mm(self.contact, v.sx, v.sy, v.dz, plane, nz)
-                p.setBrush(CYAN); p.setPen(QPen(Qt.white, 1.5)); p.drawEllipse(to_widget(cc, rr), 4, 4)
+                ci = (self.contact[2] / v.dz, self.contact[1] / v.sy, self.contact[0] / v.sx)[plane]
+                on = abs(ci - (self.cz, self.cy, self.cx)[plane]) <= 1.5      # プローブがこの断面上にある
+                ka = 1.0 if on else 0.42                                      # 断面外＝薄いゴースト
+                p.setBrush(QColor(201, 210, 221, int(150 * ka)))
+                p.setPen(QPen(QColor(120, 132, 150, int(255 * ka)), 2 if on else 1.2))
+                p.drawPolygon(QPolygonF([_pm(P) for P in gl["outline"]]))     # 白い筐体
+                p.setBrush(QColor(80, 146, 196, int(220 * ka)))
+                p.setPen(QPen(QColor(42, 90, 138, int(255 * ka)), 1.5 if on else 1))
+                p.drawPolygon(QPolygonF([_pm(P) for P in gl["array"]]))       # 青いアレイ凸面
+                p.setBrush(QColor(120, 172, 212, int(255 * ka)))
+                p.setPen(QPen(QColor(120, 132, 150, int(255 * ka)), 1))
+                p.drawEllipse(_pm(gl["button"]), 3, 3)
+            cc, rr = core.proj_mm(self.contact, v.sx, v.sy, v.dz, plane, nz)  # 皮膚接触点そのもの
+            p.setBrush(CYAN); p.setPen(QPen(Qt.white, 1.5)); p.drawEllipse(to_widget(cc, rr), 4, 4)
         nd = self._needle()                                  # 針(機構dict: カニューラ＋針)
         if nd is not None:
             self._draw_device(p, nd, lambda P: to_widget(*core.proj_mm(P, v.sx, v.sy, v.dz, plane, nz)))

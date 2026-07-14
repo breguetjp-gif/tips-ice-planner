@@ -10,9 +10,10 @@ from PyInstaller.utils.hooks import collect_all
 
 # バージョンは main.py の VERSION だけを正とする。ここに数字を直接書くと必ず main.py と食い違い、
 # 「更新したのに .app が古いバージョンを名乗る」事故になる（v0.5.2 のビルドが 0.4.58 と名乗った）。
-_APP_VERSION = re.search(r'^VERSION\s*=\s*"([^"]+)"',
-                         open(os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'main.py')).read(),
-                         re.M).group(1)
+#   encoding は必ず明示する。Windows の既定は cp1252 で、main.py の日本語コメントを読んだ瞬間に
+#   UnicodeDecodeError で PyInstaller ごと落ちる（v0.5.3 の Windows ビルドはこれで出ていなかった）。
+with open(os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'main.py'), encoding='utf-8') as _f:
+    _APP_VERSION = re.search(r'^VERSION\s*=\s*"([^"]+)"', _f.read(), re.M).group(1)
 
 # The manual PDFs are built from docs/manual_src*.html plus screenshots taken on a public CT
 # dataset; they are absent from a fresh clone. Bundle whatever is present.

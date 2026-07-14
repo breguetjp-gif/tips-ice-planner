@@ -11,11 +11,11 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QSlider, QPushButton, QScrollBar,
-    QFileDialog, QHBoxLayout, QVBoxLayout, QGridLayout, QSizePolicy, QFrame,
+    QFileDialog, QHBoxLayout, QVBoxLayout, QGridLayout, QSizePolicy, QFrame, QSplitter,
     QStackedWidget, QButtonGroup, QMessageBox, QDialog, QTextBrowser, QMenu, QCheckBox)
 from PySide6.QtGui import (QImage, QPainter, QColor, QPen, QPolygonF, QBrush, QFont, QPixmap,
                            QDesktopServices, QNativeGestureEvent, QPainterPath, QFontMetrics, QKeySequence)
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QUrl, QEvent, QUrlQuery, QTimer, QSettings
+from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal, QUrl, QEvent, QUrlQuery, QTimer, QSettings
 
 import tips_core as core
 from tips_core import liver as liver_core
@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.4"                                            # 配布のたびに上げる
+VERSION = "0.5.5"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -765,6 +765,117 @@ class PaneCell(QWidget):
         self.bar.blockSignals(True); self.bar.setMaximum(max(0, n - 1)); self.bar.setValue(int(val)); self.bar.blockSignals(False)
 
 
+class _CrossHandle(QWidget):
+    """4画面の中央（縦の仕切りと横の仕切りが交わる点）に置く掴み手。
+    これを引くと縦と横の仕切りが同時に動き、4画面の大きさが一度に変わる。"""
+    def __init__(self, quad):
+        super().__init__(quad)
+        self.quad = quad
+        self.setFixedSize(24, 24)
+        self.setCursor(Qt.SizeAllCursor)
+        self.setToolTip(L("Drag to resize all four panes at once",
+                          "ドラッグすると4画面の大きさを同時に変えられます"))
+        self._drag = False
+
+    def paintEvent(self, _e):
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(30, 52, 78, 235)); p.setPen(QPen(QColor(120, 170, 220), 1.2))
+        p.drawEllipse(self.rect().adjusted(2, 2, -2, -2))
+        p.setPen(QPen(QColor(214, 232, 248), 1.6))
+        c = self.rect().center()
+        p.drawLine(c.x() - 6, c.y(), c.x() + 6, c.y())        # ＋の印＝縦横どちらにも動く
+        p.drawLine(c.x(), c.y() - 6, c.x(), c.y() + 6)
+
+    def mousePressEvent(self, _e):
+        self._drag = True
+
+    def mouseReleaseEvent(self, _e):
+        self._drag = False
+
+    def mouseMoveEvent(self, e):
+        if self._drag:
+            self.quad.set_cross(self.quad.mapFromGlobal(e.globalPosition().toPoint()))
+
+    def mouseDoubleClickEvent(self, _e):
+        self.quad.reset()                                     # ダブルクリックで4等分に戻す
+
+
+class QuadPanes(QWidget):
+    """4画面を自由な比率に変えられる格子。
+
+    QGridLayout は比率を固定するので仕切りを掴めなかった。上下2段の QSplitter を、さらに
+    縦の QSplitter に入れて作る。ただし素直に入れ子にすると上段と下段の縦仕切りが別々に動き、
+    真ん中の線が食い違って見える → 片方が動いたらもう片方の幅を合わせ、常に1本の通った線にする。
+    交差点には掴み手（_CrossHandle）を重ねて置き、縦横を同時に動かせるようにする。
+    """
+    def __init__(self, tl, tr, bl, br):
+        super().__init__()
+        self.top = QSplitter(Qt.Horizontal); self.top.addWidget(tl); self.top.addWidget(tr)
+        self.bot = QSplitter(Qt.Horizontal); self.bot.addWidget(bl); self.bot.addWidget(br)
+        self.vs = QSplitter(Qt.Vertical); self.vs.addWidget(self.top); self.vs.addWidget(self.bot)
+        for s in (self.top, self.bot, self.vs):
+            s.setChildrenCollapsible(False)                   # 画面をゼロまで潰せないようにする
+            s.setHandleWidth(6)
+            s.setOpaqueResize(True)
+        lay = QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0); lay.addWidget(self.vs)
+        self.top.splitterMoved.connect(self._sync_from_top)
+        self.bot.splitterMoved.connect(self._sync_from_bot)
+        self.vs.splitterMoved.connect(lambda *_: self._place())
+        self.cross = _CrossHandle(self)
+
+    # setSizes() は splitterMoved を出さないので、下の2つが呼び合って無限ループにはならない
+    def _sync_from_top(self, *_):
+        self.bot.setSizes(self.top.sizes()); self._place()
+
+    def _sync_from_bot(self, *_):
+        self.top.setSizes(self.bot.sizes()); self._place()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e); self._place()
+
+    def showEvent(self, e):
+        super().showEvent(e); self._place()
+
+    def _place(self):
+        """掴み手を実際の交差点へ置き直す。Qt が最小サイズで丸めた後の値を読むので、
+        引っぱりすぎて画面が潰れそうな時も掴み手は必ず仕切りの上に乗る。"""
+        st = self.top.sizes(); sv = self.vs.sizes()
+        if len(st) < 2 or len(sv) < 2:
+            return
+        x = st[0] + self.top.handleWidth() / 2.0
+        y = sv[0] + self.vs.handleWidth() / 2.0
+        self.cross.move(int(round(x - self.cross.width() / 2.0)),
+                        int(round(y - self.cross.height() / 2.0)))
+        self.cross.raise_()
+
+    def set_cross(self, pos):
+        W, H = self.width(), self.height()
+        hw, vh = self.top.handleWidth(), self.vs.handleWidth()
+        x = int(min(max(pos.x(), 0), W)); y = int(min(max(pos.y(), 0), H))
+        cols = [max(0, x - hw // 2), max(0, W - x - hw // 2)]
+        self.top.setSizes(cols); self.bot.setSizes(cols)
+        self.vs.setSizes([max(0, y - vh // 2), max(0, H - y - vh // 2)])
+        self._place()
+
+    def reset(self):
+        W, H = self.width(), self.height()
+        self.top.setSizes([W // 2, W // 2]); self.bot.setSizes([W // 2, W // 2])
+        self.vs.setSizes([H // 2, H // 2]); self._place()
+
+    def sizes(self):
+        return dict(cols=self.top.sizes(), rows=self.vs.sizes())
+
+    def set_sizes(self, d):
+        if not d:
+            return
+        cols, rows = d.get("cols"), d.get("rows")
+        if cols and len(cols) == 2 and min(cols) >= 0 and sum(cols) > 0:
+            self.top.setSizes(list(cols)); self.bot.setSizes(list(cols))
+        if rows and len(rows) == 2 and min(rows) >= 0 and sum(rows) > 0:
+            self.vs.setSizes(list(rows))
+        self._place()
+
+
 def _sep():
     f = QFrame(); f.setFrameShape(QFrame.VLine); f.setStyleSheet("color:#33506e"); return f
 
@@ -842,12 +953,16 @@ class MainWindow(QMainWindow):
         iceBox = QWidget(); iv = QVBoxLayout(iceBox); iv.setContentsMargins(0, 0, 0, 0); iv.setSpacing(0)
         iv.addWidget(self.cIce, 1); iv.addWidget(self.iceInfo)
 
-        grid = QGridLayout(); grid.setSpacing(4)
-        grid.addWidget(self.cAx, 0, 0); grid.addWidget(self.cCor, 0, 1)
-        grid.addWidget(self.cSag, 1, 0); grid.addWidget(iceBox, 1, 1)
-        left = QWidget(); left.setLayout(grid)
-        split = QHBoxLayout(); split.setSpacing(4); split.addWidget(left, 3); split.addWidget(self.p3d, 1)
-        center = QWidget(); center.setLayout(split)
+        # 4画面は自由な比率に変えられる（仕切りを掴む／中央の交差点で縦横同時／ダブルクリックで4等分）。
+        # 3Dペインとの境目も掴めるようにした（以前は 3:1 固定だった）。
+        self.quad = QuadPanes(self.cAx, self.cCor, self.cSag, iceBox)
+        self.mainSplit = QSplitter(Qt.Horizontal)
+        self.mainSplit.addWidget(self.quad); self.mainSplit.addWidget(self.p3d)
+        self.mainSplit.setChildrenCollapsible(False); self.mainSplit.setHandleWidth(6)
+        self.mainSplit.setStretchFactor(0, 3); self.mainSplit.setStretchFactor(1, 1)
+        center = QWidget()
+        cl = QHBoxLayout(center); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
+        cl.addWidget(self.mainSplit)
         # Handle操作パネル＝画像のすぐ下・全幅の横帯（先生指定：右上→画像下の広い帯へ）。ドラッグで操作。
         self.handleCtl = HandleControl()
         self.handleCtl.b1Changed.connect(lambda x: self.sB1.setValue(int(round(x))))
@@ -1593,7 +1708,53 @@ class MainWindow(QMainWindow):
             viewMode=self.viewMode, contact=_l(self.contact), normal=_l(self.normal),
             surfPlane=self.surfPlane, liver_mode=self.liver_mode,
             liver_opacity=self.liver_opacity, show_liver=self.show_liver,
-            obs=[np.asarray(o, float).tolist() for o in self.obs])
+            obs=[np.asarray(o, float).tolist() for o in self.obs],
+            view=self._capture_view())
+
+    def _capture_view(self):
+        """画面の見え方（＝どう見えていたか）。幾何とは別に持つ。
+        これまで保存していたのは幾何（パス・Entry/Target・角度）だけで、CT をどこまで拡大して
+        どこを見ていたかは復元時に初期状態へ戻っていた。作業の続きを開いたのに絵が違う。
+        保存するのは: 4画面それぞれの拡大率と表示位置 / スライス位置 / 窓値(WL/WW) / 3Dの視点。"""
+        def _p(pane):
+            return dict(zoom=float(pane.zoom), pan=[float(pane.pan.x()), float(pane.pan.y())])
+        return dict(
+            panes={k: _p(p) for k, p in (("ax", self.ax), ("cor", self.cor),
+                                         ("sag", self.sag), ("ice", self.ice))},
+            slices=[int(self.cz), int(self.cy), int(self.cx)],
+            wl=float(self.wl), ww=float(self.ww),
+            az=float(self.p3d.az), el=float(self.p3d.el), zoom3d=float(self.p3d.zoom3d),
+            pan3d=[float(self.p3d.pan3d.x()), float(self.p3d.pan3d.y())],
+            quad=self.quad.sizes(), main=self.mainSplit.sizes())   # 4画面の枠そのものの大きさ
+
+    def _restore_view(self, v):
+        """_capture_view の内容を戻す。古い保存データには 'view' が無いので、その場合は何もしない
+        （＝従来どおり初期表示）。壊れた値で画面が飛ばないよう、範囲は必ずクランプする。"""
+        if not v or self.vol is None:
+            return
+        nz, H, W = self.vol.shape
+        for k, pane in (("ax", self.ax), ("cor", self.cor), ("sag", self.sag), ("ice", self.ice)):
+            d = (v.get("panes") or {}).get(k)
+            if not d:
+                continue
+            pane.zoom = float(np.clip(d.get("zoom", 1.0), 0.2, 12.0))       # zoom_at と同じ上下限
+            px, py = d.get("pan", [0.0, 0.0])
+            pane.pan = QPointF(float(px), float(py))
+        sl = v.get("slices")
+        if sl and len(sl) == 3:
+            self.cz = int(np.clip(sl[0], 0, nz - 1))
+            self.cy = int(np.clip(sl[1], 0, H - 1))
+            self.cx = int(np.clip(sl[2], 0, W - 1))
+        self.wl = float(v.get("wl", self.wl)); self.ww = max(1.0, float(v.get("ww", self.ww)))
+        self.p3d.az = float(v.get("az", self.p3d.az))
+        self.p3d.el = float(np.clip(v.get("el", self.p3d.el), -89, 89))
+        self.p3d.zoom3d = float(np.clip(v.get("zoom3d", self.p3d.zoom3d), 0.2, 8.0))
+        p3 = v.get("pan3d", [0.0, 0.0])
+        self.p3d.pan3d = QPointF(float(p3[0]), float(p3[1]))
+        self.quad.set_sizes(v.get("quad"))                    # 4画面の枠の大きさ（仕切りの位置）
+        m = v.get("main")
+        if m and len(m) == 2 and min(m) >= 0 and sum(m) > 0:
+            self.mainSplit.setSizes(list(m))
 
     def _restore_state(self, st):
         """_capture_state の辞書から作業状態を復元し、画面を更新する。"""
@@ -1622,6 +1783,7 @@ class MainWindow(QMainWindow):
         self.aimBtn.setChecked(self.aim_tip is not None); self.hubWidget.set_torque(self.aim_torque)
         self.liver = None; self._liver_key = None; self.p3d.liver = None      # 復元後に幾何から再計算させる
         self.body = None; self._body_key = None; self.p3d.body = None
+        self._restore_view(st.get("view"))                    # CT の拡大率・表示位置・スライス・窓値・3D視点
         self._update_step_ui(); self._update_mode_ui(); self._refresh_toggles()
         self._refresh(); self._compute_body()
         self.statusBar().showMessage(L("Restored saved state.", "保存された作業状態を復元しました。"), 6000)

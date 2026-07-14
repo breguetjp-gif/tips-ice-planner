@@ -175,8 +175,9 @@ def ice_image(vol, sx, sy, dz, geom, wl=WL_DEFAULT, ww=WW_DEFAULT, flip=False):
 
 # ===== 偏向で曲がる先端（3D linkage用・定曲率円弧）=====
 def bend_tip(path_pts, zP, theta_deg, b1_deg, b2_deg, sx, sy, dz,
-             tip_high_z=True, Lb=30.0):
+             tip_high_z=True, Lb=30.0, shaft_len=90.0):
     """先端30mm近位を支点に、A/P+L/R合成方向へ全角βの円弧で曲げる。
+    shaft_len: 近位シャフトの最短全長(mm)。TIPS の外筒(cannula_len=90)に合わせてある。
     返り値 dict: F(支点), orange(F→先端のポリライン Nx3), Tp(曲がった先端), t1(先端接線)。"""
     fr = _path_frame(path_pts, zP, sx, sy, dz)       # 円環依存を断つ（ice_geometryを呼ばない）
     if fr is None:
@@ -202,6 +203,19 @@ def bend_tip(path_pts, zP, theta_deg, b1_deg, b2_deg, sx, sy, dz,
         shaft.append(np.array([_interp(pz, px, z2) * sx, _interp(pz, py, z2) * sy, z2 * dz]))
         z2 -= 2 * dd
     shaft = shaft[::-1]; shaft.append(F)
+    # 近位側をまっすぐ延長する。実機の ICE カテーテルは大腿静脈から入っており、シャフトは
+    # 撮影範囲の外まで続いている。クリックした IVC パスの端で切ると数十mmの切り株になり、
+    # 同じ画面に描かれる TIPS の外筒（Entry から頸静脈側へ 90mm）より短く見えてしまう。
+    # 近位端の接線方向へ、全長が shaft_len に届くまで一直線に伸ばす。
+    if len(shaft) >= 2:
+        seg = np.linalg.norm(np.diff(np.asarray(shaft, float), axis=0), axis=1)
+        have = float(seg.sum())
+        u = nrm(np.asarray(shaft[0], float) - np.asarray(shaft[1], float))   # 近位向き
+    else:
+        have = 0.0
+        u = nrm(F - distal[-2]) if md >= 2 else -td3                          # 点が足りない時は先端の逆向き
+    if have < shaft_len and np.linalg.norm(u) > 1e-6:
+        shaft = [np.asarray(shaft[0], float) + u * (shaft_len - have)] + list(shaft)
     t0 = nrm((distal[-2] if md >= 2 else distal[0]) - F)
     if np.linalg.norm(t0) < 1e-6:
         t0 = td3

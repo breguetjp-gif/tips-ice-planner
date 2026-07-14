@@ -834,3 +834,113 @@ def test_probe_drawn_on_all_three_planes():
     finally:
         M.core.probe_glyph = real_glyph
         win._stop_workers()
+
+
+def test_save_state_records_the_view():
+    """Save state は「どう見えていたか」も保存すること（先生指示 2026-07-15）。
+
+    これまで保存していたのは幾何（IVCパス・Entry/Target・角度）だけで、CT をどれだけ拡大して
+    どこを見ていたか、スライスはどこか、4画面の大きさはどうだったかは復元時に初期状態へ戻っていた。
+    作業の続きを開いたのに絵が違う、という状態だった。
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+    import dicom_io
+    import glob
+
+    files = sorted(glob.glob(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "sample_data", "HCC048_portal_venous", "*.dcm")))
+    if not files:
+        return
+
+    win = M.MainWindow(); win.resize(1400, 900)
+    try:
+        win.current_study_uid = "t"; win._current_files = list(files)
+        win._on_series_loaded(dicom_io.load_series_files(files))
+        for _ in range(3):
+            app.processEvents()
+        win.show_liver = False
+
+        # 画面を「作業中」の見え方にする
+        win.ax.zoom = 2.75; win.ax.pan = QPointF(-31.0, 12.0)
+        win.sag.zoom = 1.6
+        win.cz, win.cy, win.cx = 61, 300, 210
+        win.wl, win.ww = 55.0, 380.0
+        win.p3d.az, win.p3d.el, win.p3d.zoom3d = 34.0, -48.0, 1.9
+        win.quad.resize(900, 700)
+        win.quad.set_cross(M.QPoint(600, 260))                # 交差点を掴んで動かした状態
+        cols, rows = win.quad.top.sizes(), win.quad.vs.sizes()
+        assert cols[0] != cols[1], "交差点を動かしても左右の幅が変わっていない"
+
+        st = win._capture_state()
+        assert "view" in st, "Save state に画面の見え方が入っていない"
+
+        # 全部を初期状態に戻してから復元する
+        win.ax.zoom = 1.0; win.ax.pan = QPointF(0, 0); win.sag.zoom = 1.0
+        win.cz = win.cy = win.cx = 0
+        win.wl, win.ww = 0.0, 400.0
+        win.p3d.az, win.p3d.el, win.p3d.zoom3d = 0.0, -75.0, 1.0
+        win.quad.reset()
+        win._restore_state(st)
+        for _ in range(3):
+            app.processEvents()
+
+        assert abs(win.ax.zoom - 2.75) < 1e-6, f"CTの拡大率が戻っていない ({win.ax.zoom})"
+        assert abs(win.ax.pan.x() + 31.0) < 1e-6, "CTの表示位置が戻っていない"
+        assert abs(win.sag.zoom - 1.6) < 1e-6, "Sagittal の拡大率が戻っていない"
+        assert (win.cz, win.cy, win.cx) == (61, 300, 210), "スライス位置が戻っていない"
+        assert (win.wl, win.ww) == (55.0, 380.0), "窓値(WL/WW)が戻っていない"
+        assert abs(win.p3d.az - 34.0) < 1e-6 and abs(win.p3d.zoom3d - 1.9) < 1e-6, "3Dの視点が戻っていない"
+        assert win.quad.top.sizes() == cols and win.quad.vs.sizes() == rows, "4画面の大きさが戻っていない"
+        assert win.quad.bot.sizes() == win.quad.top.sizes(), "上段と下段の縦仕切りがずれている"
+
+        # 'view' の無い古い保存データでも落ちないこと
+        old = dict(st); old.pop("view")
+        win._restore_state(old)
+        print("✅ save state records zoom / pan / slices / WL-WW / 3D view / pane sizes")
+    finally:
+        win._stop_workers()
+
+
+def test_cross_handle_resizes_all_four_panes():
+    """中央の交差点を1回引くだけで、4画面の縦横が同時に変わること（先生指示 2026-07-15）。
+    上段と下段の縦仕切りは常に一致していなければならない（食い違うと真ん中の線が折れて見える）。"""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    app.setApplicationName("TIPS ICE Planner")
+    import main as M
+
+    q = M.QuadPanes(*[M.QLabel(t) for t in ("Ax", "Cor", "Sag", "ICE")])
+    q.resize(1000, 800); q.show(); app.processEvents()
+    q.reset(); app.processEvents()
+    before_cols, before_rows = q.top.sizes(), q.vs.sizes()
+
+    q.set_cross(M.QPoint(700, 250))                            # 交差点を右上へ引く
+    app.processEvents()
+    cols, rows = q.top.sizes(), q.vs.sizes()
+    assert cols != before_cols, "交差点を引いても左右の幅が変わらない"
+    assert rows != before_rows, "交差点を引いても上下の高さが変わらない"   # ＝縦横が同時に動く
+    assert cols[0] > cols[1] and rows[0] < rows[1], "引いた方向と逆に動いている"
+    assert q.bot.sizes() == q.top.sizes(), "上段と下段の縦仕切りが食い違っている"
+
+    # 掴み手そのものが交差点の上に乗っていること（乗っていないと掴めない）
+    cc = q.cross.geometry().center()
+    x = q.top.sizes()[0] + q.top.handleWidth() / 2.0
+    y = q.vs.sizes()[0] + q.vs.handleWidth() / 2.0
+    assert abs(cc.x() - x) <= 1 and abs(cc.y() - y) <= 1, \
+        f"掴み手が交差点からずれている (handle={cc.x()},{cc.y()} / cross={x},{y})"
+
+    # 片方の仕切りだけを動かしても、もう片方の段が追従して1本の線であり続ける
+    q.top.setSizes([300, 700]); q.top.splitterMoved.emit(300, 1); app.processEvents()
+    assert q.bot.sizes() == q.top.sizes(), "上段を動かしたのに下段が追従していない"
+    q.close()
+    print("✅ cross handle resizes all four panes at once")

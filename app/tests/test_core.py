@@ -573,3 +573,44 @@ def test_updater_apply_and_relaunch_windows():
 if __name__ == "__main__":
     test_ortho(); test_ice_and_geom(); test_deflection(); test_bend_monotonic(); test_needle(); test_needle3(); test_rups_colapinto(); test_predict(); test_liver(); test_features(); test_updater(); test_updater_apply_and_relaunch(); test_updater_windows(); test_updater_apply_and_relaunch_windows()
     print("✅ tips_core smoke tests passed")
+
+
+def test_ice_shaft_reaches_tips_length():
+    """ICEカテーテルの近位シャフトは、クリックしたIVCパスの端で切れず、TIPSの外筒(90mm)並みに伸びること。
+
+    実機のICEカテーテルは大腿静脈から入っており、シャフトは撮影範囲の外まで続いている。
+    パスの端で止めると数十mmの切り株になり、同じ画面のTIPS外筒より短く見えていた（先生指摘）。
+    """
+    from tips_core import geometry as G
+    sx = sy = 0.7; dz = 2.5
+    path = [[20.0, 250.0, 240.0], [40.0, 258.0, 244.0], [60.0, 266.0, 248.0]]   # 短めのIVCパス
+    zP = 52.0
+
+    def length(a):
+        return float(np.linalg.norm(np.diff(np.asarray(a, float), axis=0), axis=1).sum())
+
+    stub = G.bend_tip(path, zP, 180.0, 10.0, 0.0, sx, sy, dz, shaft_len=0.0)
+    full = G.bend_tip(path, zP, 180.0, 10.0, 0.0, sx, sy, dz)                   # 既定 = 90mm
+    assert length(stub["shaft"]) < 60.0, "前提が崩れた: 元々シャフトは短いはず"
+    assert length(full["shaft"]) >= 89.0, \
+        f"シャフトが TIPS 外筒(90mm)に届いていない ({length(full['shaft']):.1f}mm)"
+
+    # 伸ばしたのは **近位側だけ**。支点 F と先端は 1ミクロンも動いてはいけない
+    assert np.allclose(stub["F"], full["F"]), "シャフトを伸ばしたら支点が動いた"
+    assert np.allclose(stub["Tp"], full["Tp"]), "シャフトを伸ばしたら先端が動いた"
+    assert np.allclose(stub["orange"], full["orange"]), "シャフトを伸ばしたら曲げ形状が変わった"
+    assert np.allclose(full["shaft"][-1], full["F"]), "シャフトの遠位端が支点に繋がっていない"
+
+    # 延長分はパスの近位向きに一直線（＝折れ曲がって明後日の方向へ伸びていない）
+    s = np.asarray(full["shaft"], float)
+    u_ext = s[1] - s[0]; u_ext /= np.linalg.norm(u_ext)
+    u_path = s[2] - s[1]; u_path /= np.linalg.norm(u_path)
+    assert float(u_ext @ u_path) > 0.9, "延長したシャフトがパスの向きから外れている"
+
+    # パスが既に長い場合は伸ばさない（勝手に画面外まで飛ばさない）
+    long_path = [[2.0, 240.0, 236.0], [40.0, 255.0, 244.0], [86.0, 270.0, 250.0]]
+    lp = G.bend_tip(long_path, 70.0, 180.0, 0.0, 0.0, sx, sy, dz)
+    lp0 = G.bend_tip(long_path, 70.0, 180.0, 0.0, 0.0, sx, sy, dz, shaft_len=0.0)
+    assert abs(length(lp["shaft"]) - length(lp0["shaft"])) < 1e-6, \
+        "既に90mmを超えているのに、さらに伸ばしている"
+    print("✅ ICE shaft %.1fmm → %.1fmm (TIPS外筒=90mm)" % (length(stub["shaft"]), length(full["shaft"])))

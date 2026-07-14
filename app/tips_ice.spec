@@ -4,8 +4,15 @@
   Win:  同コマンド                              → dist/TIPS ICE Planner/TIPS ICE Planner.exe
 """
 import os
+import re
 import sys
 from PyInstaller.utils.hooks import collect_all
+
+# バージョンは main.py の VERSION だけを正とする。ここに数字を直接書くと必ず main.py と食い違い、
+# 「更新したのに .app が古いバージョンを名乗る」事故になる（v0.5.2 のビルドが 0.4.58 と名乗った）。
+_APP_VERSION = re.search(r'^VERSION\s*=\s*"([^"]+)"',
+                         open(os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'main.py')).read(),
+                         re.M).group(1)
 
 # The manual PDFs are built from docs/manual_src*.html plus screenshots taken on a public CT
 # dataset; they are absent from a fresh clone. Bundle whatever is present.
@@ -40,7 +47,7 @@ if sys.platform == 'darwin':
                  bundle_identifier='com.bonchan.tips-ice-planner',
                  info_plist={
                      'NSHighResolutionCapable': True,
-                     'CFBundleShortVersionString': '0.4.58',
+                     'CFBundleShortVersionString': _APP_VERSION,
                      'LSMinimumSystemVersion': '11.0',
                      # 外部アプリから検査を渡すためのURLスキーム（tipsiceplanner://open?dir=...）
                      'CFBundleURLTypes': [{

@@ -6,6 +6,7 @@
 import os
 import re
 import sys
+import glob
 from PyInstaller.utils.hooks import collect_all
 
 # バージョンは main.py の VERSION だけを正とする。ここに数字を直接書くと必ず main.py と食い違い、
@@ -20,6 +21,16 @@ with open(os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'main.py'), encod
 _candidates = [('icon_1024.png', '.'), ('docs/manual_ja.pdf', 'docs'),
                ('docs/manual_en.pdf', 'docs')]
 datas = [(src, dst) for src, dst in _candidates if os.path.exists(src)]
+# 配布アプリに常に入れる公開サンプルCT（TCIA HCC-TACE-Seg / HCC048・CC BY 4.0）。
+# リポジトリ直下 sample_data か、無ければ app/sample_data から拾う。
+for _root in (os.path.join('..', 'sample_data'), 'sample_data'):
+    _sd = os.path.join(_root, 'HCC048_portal_venous')
+    if os.path.isdir(_sd):
+        datas += [(f, 'sample_data/HCC048_portal_venous') for f in glob.glob(os.path.join(_sd, '*.dcm'))]
+        _attr = os.path.join(_root, 'ATTRIBUTION.md')
+        if os.path.exists(_attr):
+            datas += [(_attr, 'sample_data')]
+        break
 binaries = []
 hidden = ['catalog', 'database_view', 'bg', 'dicom_io', 'updater', 'i18n', 'settings_store', 'handle_control', 'tips_core', 'tips_core.geometry', 'tips_core.liver']
 # DICOM デコーダ群（ネイティブlib込みで同梱）

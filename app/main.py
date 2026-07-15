@@ -27,7 +27,7 @@ from handle_control import HandleControl, SurfaceProbeControl
 
 GITHUB_REPO = "https://github.com/breguetjp-gif/tips-ice-planner"
 AUTHOR_LINE = "Masayoshi Yamamoto — Department of Radiology, Teikyo University School of Medicine, Tokyo, Japan"
-VERSION = "0.5.7"                                            # 配布のたびに上げる
+VERSION = "0.5.8"                                            # 配布のたびに上げる
 URL_SCHEME = "tipsiceplanner"                                # 外部アプリから検査を渡すためのURLスキーム
 # 更新確認用 version.json。リポジトリ直下のものを raw で読む（個人のクラウド共有リンクは埋め込まない）。
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"
@@ -1000,6 +1000,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._update_step_ui()
         self._apply_language()                               # 保存済み言語でUI文字列を確定（EN/JA）
+        self._ensure_sample_async()                          # 配布アプリに公開サンプルCT(HCC048)を常に1例入れておく
         QApplication.instance().aboutToQuit.connect(self._stop_workers)   # Cmd+Q は closeEvent を通らない
 
     # ---------- 下部コントロール ----------
@@ -1283,6 +1284,7 @@ class MainWindow(QMainWindow):
         fm = mb.addMenu("File"); self._reg(fm.menuAction(), "File", "ファイル")
         self._reg(fm.addAction("", self._go_database), "Patient list", "患者リスト")
         self._reg(fm.addAction("", self._open_dicom), "Open DICOM…", "DICOMを開く…")
+        self._reg(fm.addAction("", self._open_sample), "Open sample case (HCC048)", "サンプル症例を開く（HCC048）")
         fm.addSeparator()
         self._reg(fm.addAction("", self._open_npy), "Open .npy… (developer)", ".npyを開く…（開発用）")
         em = mb.addMenu("Edit"); self._reg(em.menuAction(), "Edit", "編集")
@@ -1692,6 +1694,80 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(L("Already in TIPS ICE Planner. Pick a phase (series) to open.",
                                            "既に取り込み済みです。開く相（シリーズ）を選んでください。"), 10000)
+
+    # ---------- 同梱サンプル症例（TCIA HCC-TACE-Seg / HCC048・CC BY 4.0）----------
+    SAMPLE_DIR = "HCC048_portal_venous"
+
+    def _sample_src(self):
+        """同梱DICOMの場所。凍結ビルドは _MEIPASS/sample_data、開発時は app/sample_data か
+        リポジトリ直下 sample_data。無ければ None。"""
+        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        for cand in (os.path.join(base, "sample_data", self.SAMPLE_DIR),
+                     os.path.join(os.path.dirname(base), "sample_data", self.SAMPLE_DIR)):
+            if os.path.isdir(cand):
+                return cand
+        return None
+
+    def _sample_dst(self):
+        import catalog
+        return os.path.join(catalog.app_data_dir(), "sample_data", self.SAMPLE_DIR)
+
+    def _sample_present(self):
+        dst = self._sample_dst()
+        return any(s.get("files") and s["files"][0].startswith(dst) for s in self.catalog.series)
+
+    def _ensure_sample_async(self):
+        """配布アプリに公開サンプルCT(HCC048)を常に1例入れておく。未登録なら背景でコピー＋取込。"""
+        if os.environ.get("TIPS_NO_SAMPLE"):                 # テスト・レンダ用に自動読込を抑止
+            return
+        if self._sample_src() is None or self._sample_present():
+            return
+        import bg
+        w = bg.Worker(lambda prog: self._ensure_sample_work(prog))
+        self._sample_worker = w
+        w.done.connect(self._on_sample_ready)
+        w.failed.connect(lambda _m: None)                    # 失敗しても起動は妨げない
+        w.start()
+
+    def _ensure_sample_work(self, progress=None):
+        """（背景スレッド）同梱DICOMを app_data 配下へ一度コピー（安定パス・更新をまたいで有効）し取り込む。"""
+        import shutil, glob as _glob, catalog
+        src = self._sample_src(); dst = self._sample_dst()
+        if src is None:
+            return 0
+        if not (os.path.isdir(dst) and _glob.glob(os.path.join(dst, "*.dcm"))):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+            attr = os.path.join(os.path.dirname(src), "ATTRIBUTION.md")   # CC BY 4.0 の出典表示も同梱
+            if os.path.exists(attr):
+                try:
+                    shutil.copy2(attr, os.path.join(os.path.dirname(dst), "ATTRIBUTION.md"))
+                except Exception:
+                    pass
+        return self.catalog.add_folder(dst, progress=progress)   # add_folderはuidで重複スキップ＝冪等
+
+    def _on_sample_ready(self, added):
+        if added:
+            self.db.reload()
+
+    def _open_sample(self):
+        """File ▸ サンプル症例を開く。未取込なら取り込み、患者リストで選択（相が1つなら自動で開く）。"""
+        if self._sample_src() is None:
+            self.statusBar().showMessage(L("Sample data is not bundled in this build.",
+                                           "このビルドにはサンプルデータが同梱されていません。"), 8000)
+            return
+        import bg
+        bg.run_with_progress(self, L("Loading sample case…", "サンプル症例を読み込み中…"),
+            lambda prog: self._ensure_sample_work(prog), self._on_sample_opened,
+            on_fail=lambda m: self.statusBar().showMessage(L("Sample load error: ", "サンプル読込エラー: ") + m.splitlines()[0], 8000))
+
+    def _on_sample_opened(self, added):
+        self.db.reload(); self.stack.setCurrentWidget(self.db)
+        dst = self._sample_dst()
+        uid = next((s.get("study_uid") for s in self.catalog.series
+                    if s.get("files") and s["files"][0].startswith(dst)), None)
+        if uid:
+            self.db.select_study(uid, open_if_single=True)
 
     def _set_volume(self, vol):
         self.vol = vol; nz, H, W = vol.shape

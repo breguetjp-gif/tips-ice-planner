@@ -6,6 +6,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ["TIPS_NO_SAMPLE"] = "1"                      # 起動時サンプル自動読込は抑止（テストは隔離カタログ）
 import PySide6
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(
     os.path.dirname(PySide6.__file__), "Qt", "plugins", "platforms")
@@ -1141,5 +1142,41 @@ def test_actual_tip_button_can_remove_the_needle():
         assert win.aimBtn.isChecked() == win.aimMode is True, \
             "ボタンは押された見た目なのに入力モードが立っていない（クリックしても針が動かない）"
         print("✅ actual tip button toggles the needle off")
+    finally:
+        win._stop_workers()
+
+
+def test_bundled_sample_case_autoloads():
+    """配布アプリに常に入れる公開サンプルCT(HCC048)：同梱DICOMを app_data へコピー＋カタログ登録し、
+    冪等（再取込で重複しない）で、ATTRIBUTION(CC BY 4.0 出典表示)も一緒に置かれること。"""
+    import glob
+    import main as M
+    import catalog as catmod
+    from pydicom.uid import generate_uid
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    tmp = tempfile.mkdtemp(prefix="tips_sample_test_")
+    data_dir = os.path.join(tmp, "appdata"); os.makedirs(data_dir)
+    catmod.app_data_dir = lambda: (os.makedirs(os.path.join(data_dir, "thumbs"), exist_ok=True) or data_dir)
+    sample_src = os.path.join(tmp, "sample_data", "HCC048_portal_venous"); os.makedirs(sample_src)
+    su, se = generate_uid(), generate_uid()
+    for z in range(4):
+        _slice(os.path.join(sample_src, f"{z:08d}.dcm"), su, se, z, "CT PV", 1, name="HCC_048", pid="HCC_048")
+    with open(os.path.join(os.path.dirname(sample_src), "ATTRIBUTION.md"), "w") as f:
+        f.write("TCIA HCC-TACE-Seg / HCC_048 — CC BY 4.0")
+    win = M.MainWindow()
+    try:
+        win._sample_src = lambda: sample_src
+        assert not win._sample_present(), "起動直後はまだ未登録"
+        added = win._ensure_sample_work()
+        assert added == 1, "サンプル1シリーズを取り込む"
+        assert win._sample_present(), "取込後は present"
+        dst = win._sample_dst()
+        assert os.path.isdir(dst) and glob.glob(os.path.join(dst, "*.dcm")), "app_data へコピー（安定パス）"
+        assert os.path.exists(os.path.join(os.path.dirname(dst), "ATTRIBUTION.md")), "CC BY 4.0 の出典表示も同梱"
+        before = len(win.catalog.series)
+        win._ensure_sample_work()
+        assert len(win.catalog.series) == before, "再取込しても重複しない（uidでスキップ）"
+        print("✅ bundled sample case autoloads (copy to app_data / idempotent / attribution)")
     finally:
         win._stop_workers()

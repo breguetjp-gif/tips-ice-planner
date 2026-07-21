@@ -1,6 +1,6 @@
-"""DICOM 目録。アプリの入口となる検査一覧。
+"""DICOM 目録（Miele Database 相当の入口）。
 
-設計:
+設計（Miele を参考）:
   - スタディ(患者) → シリーズ の2階層。表＝スタディ、展開でシリーズ。
   - 取込(add_folder)は **メタデータのみ** をスキャン（stop_before_pixels）＝数千件でも高速。
   - サムネイルは **遅延生成＋キャッシュ**（表示要求時に中央スライスをデコード→縮小→.npy保存）。
@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import glob
 import json
+from datetime import datetime
 import numpy as np
 
 import dicom_io
+import preset
 
 try:
     import pydicom
@@ -21,15 +23,15 @@ except Exception:                                   # pragma: no cover
 
 
 def app_data_dir():
-    """OS別のアプリデータ。PySide6があればQStandardPaths、無ければ ~/.tips_planner。"""
+    """OS別のアプリデータ。PySide6があればQStandardPaths、無ければ preset.LEGACY_DATA_DIR。"""
     try:
         from PySide6.QtCore import QStandardPaths
         base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
         if not base:
             raise RuntimeError
-        d = os.path.join(base, "TIPSPlanner")
+        d = os.path.join(base, preset.DATA_SUBDIR)
     except Exception:
-        d = os.path.join(os.path.expanduser("~"), ".tips_planner")
+        d = os.path.expanduser(preset.LEGACY_DATA_DIR)
     os.makedirs(os.path.join(d, "thumbs"), exist_ok=True)
     return d
 
@@ -183,6 +185,7 @@ class Catalog:
 
     def _register_groups(self, groups):
         """スキャン済みグループ(list[dict])を、未取込のものだけカタログへ登録して保存する。"""
+        stamp = datetime.now().strftime("%Y/%m/%d %H:%M")   # 取り込み日時（この行が初めてカタログに載った時刻）
         added = 0
         for g in groups:
             uid = g["series_uid"]
@@ -194,6 +197,7 @@ class Catalog:
             rec["files"] = files
             rec["rep"] = files[len(files) // 2]      # サムネ用代表ファイル（中央スライス）
             rec["thumb"] = ""                        # 遅延生成
+            rec["imported"] = stamp                  # 撮影日(study_date)とは別に「アプリへ取り込んだ日時」を記録
             self.series.append(rec)
             added += 1
         self.save()
@@ -254,14 +258,46 @@ class Catalog:
         for uid, ss in by.items():
             ss.sort(key=lambda x: x.get("series_no", 0))
             head = ss[0]
+            imps = [x.get("imported", "") for x in ss if x.get("imported")]  # 検査内で最初に取り込んだ時刻を代表に
             out.append(dict(
                 study_uid=uid, patient_name=head["patient_name"], patient_id=head["patient_id"],
                 birth=head["birth"], age=head["age"], institution=head["institution"],
                 study_date=head["study_date"], study_desc=head["study_desc"],
+                imported=min(imps) if imps else "",   # 旧データ（取り込み日未記録）は空欄
                 modality=head["modality"], n_images=sum(x["n"] for x in ss),
                 n_series=len(ss), series=ss, comment=self.comments.get(uid, "")))
         out.sort(key=lambda d: d["study_date"], reverse=True)
         return out
+
+    def identity_for(self, files, study_uid=None):
+        """このファイル列について **カタログが主張している素性** を返す（開く前の照合用）。
+
+        カタログは DICOM を元の場所に置いたまま「パス」で覚える。同じフォルダ（例: デスクトップの
+        作業フォルダ）を別の検査で使い回すと、パスはそのままに中身だけ別患者・別モダリティへ
+        入れ替わり、**一覧の見出しと実際に開く画像が食い違う**。2026-07-20 に実際に発生し、
+        「MRを開いたら別患者のCTが出る」状態になった。
+        戻り値は dict(series_uid, study_uid, patient_id, modality, series_desc) / 該当なしは None。
+        """
+        if not files:
+            return None
+        head = files[0]
+        for s in self.series:
+            fl = s.get("files") or []
+            if not fl:
+                continue
+            if fl[0] == head or (study_uid and s.get("study_uid") == study_uid and head in fl):
+                return dict(series_uid=s.get("series_uid"), study_uid=s.get("study_uid"),
+                            patient_id=s.get("patient_id"), modality=s.get("modality"),
+                            series_desc=s.get("series_desc"))
+        return None
+
+    def remove_series(self, series_uid):
+        """1シリーズだけカタログから外す（中身が別物に入れ替わっていた等）。"""
+        n = len(self.series)
+        self.series = [s for s in self.series if s.get("series_uid") != series_uid]
+        if len(self.series) != n:
+            self.save()
+        return n - len(self.series)
 
     # ---- サムネイル（遅延生成＋キャッシュ）----
     def thumbnail(self, series, maxdim=120):

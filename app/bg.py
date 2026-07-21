@@ -4,9 +4,33 @@ UIが固まらないよう、処理を QThread で走らせ、進捗を QProgres
 fn は `fn(progress)` の形（progress(i, n) を呼ぶと進捗バーが進む。無視してもよい）。
 """
 from __future__ import annotations
+import atexit
 import traceback
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import QProgressDialog, QMessageBox
+
+_live_workers: list["Worker"] = []
+
+
+def _wait_workers_at_exit():
+    """インタープリタ終了時、走行中の Worker の完了を待つ。
+
+    app.exec() を通らない終了（テスト・ヘッドレススクリプト等）では aboutToQuit も
+    closeEvent も呼ばれず、走行中の QThread が PySide の終了処理
+    (destroyQCoreApplication) で破棄されて qFatal→abort() する
+    （2026-07-14 に肝抽出 Worker 走行中のプロセス終了で実際に SIGABRT）。
+    atexit は後から登録した方が先に走る(LIFO)ので、PySide の終了処理より先に
+    ここでワーカーを待てる。"""
+    for w in list(_live_workers):
+        try:
+            if w.isRunning():
+                w.requestInterruption()
+                w.wait(10000)
+        except RuntimeError:                                # 既に C++ 側破棄済み等は無視
+            pass
+
+
+atexit.register(_wait_workers_at_exit)
 
 
 class Worker(QThread):
@@ -17,6 +41,9 @@ class Worker(QThread):
     def __init__(self, fn):
         super().__init__()
         self._fn = fn
+        _live_workers.append(self)                          # 終了時待ち対象（atexit 用）
+        self.finished.connect(
+            lambda: _live_workers.remove(self) if self in _live_workers else None)
 
     def run(self):
         try:

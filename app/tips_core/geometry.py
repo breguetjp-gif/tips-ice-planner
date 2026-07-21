@@ -1,6 +1,6 @@
 """TIPS Planner — 計算核（OS非依存・numpyのみ）。
 
-側射ICEの幾何（斜めMPRリスライス・扇のスキャン変換・先端の偏向と屈曲・針の弧）の正本。
+現行 Miele プラグイン TIPSPlannerFilter.m の幾何を「唯一の正本」として移植したもの。
 スタンドアロン版(PySide6)・将来のWeb版・Macプラグインはすべてこの核を共有する。
 
 含むもの:
@@ -18,8 +18,15 @@
 from __future__ import annotations
 import numpy as np
 
-R_DEPTH = 85.0                 # ICE 深達 mm（plugin R）
-FAN_HALF = np.radians(45.0)    # 扇の半角（plugin FAN, 90°セクター）
+# ── ビーム定数・経路パラメータ化は術式プリセット（app/preset.py）から取る ──────────
+# preset が無い素の import 時は ICE/TIPS の既定値（従来の計算核と同値）。
+try:
+    import preset as _preset       # 各アプリの app/preset.py（bare import・app/ が sys.path 前提）
+except Exception:                  # 単体利用（プラグイン移植・ノートブック等）
+    _preset = None
+R_DEPTH = float(getattr(_preset, "R_DEPTH_MM", 85.0))                  # 描出深達 mm（ICE=85 / EUS linear=100）
+FAN_HALF = np.radians(float(getattr(_preset, "FAN_HALF_DEG", 45.0)))   # 扇の半角（ICE=45°=90°扇 / EUS=75°=150°扇）
+PATH_PARAM = str(getattr(_preset, "PATH_PARAM", "z"))                  # 経路座標: "z"=体軸単調(IVC芯線) / "s"=弧長(管腔)
 PXMM = 0.6                     # ICE像の画素ピッチ mm
 WL_DEFAULT, WW_DEFAULT = 40.0, 400.0
 # 経腹コンベックス・プローブ（標準値で固定・先生決裁 2026-06-24）
@@ -73,21 +80,27 @@ def ortho_image(vol, sx, sy, dz, plane, idx, wl=WL_DEFAULT, ww=WW_DEFAULT):
 
 
 # ===== ICE 扇の幾何（直線ロッド＋2軸偏向）=====
-def _path_frame(path_pts, zP, sx, sy, dz):
-    """path上のzPでの頂点Fbと軸接線S（＋補間用配列）を返す。≥2点必須・無効ならNone。"""
+def _path_frame_s(path_pts, sP, sx, sy, dz):
+    """path上の弧長 sP(mm, 口側=0) での頂点Fbと軸接線S（口→遠位向き）を返す。
+    ★クリック順を口→遠位として扱い、zソートしない＝食道→胃→十二指腸のような
+      z非単調パスに対応（旧IVC版はzで補間していたため非単調で破綻していた）。
+    返り値: Fb, S, s(累積弧長配列), Wp(world点列 Nx3, クリック順), 0.0, L, sP。無効ならNone。"""
     pts = np.asarray(path_pts, float)
     if pts.shape[0] < 2:
         return None
-    order = np.argsort(pts[:, 0])
-    pz, py, px = pts[order, 0], pts[order, 1], pts[order, 2]
-    zmin, zmax = float(pz[0]), float(pz[-1])
-    zP = float(np.clip(zP, zmin, zmax))
-    Fb = np.array([_interp(pz, px, zP) * sx, _interp(pz, py, zP) * sy, zP * dz])
-    zA, zB = min(zmax, zP + 2), max(zmin, zP - 2)
-    S = nrm([(_interp(pz, px, zA) - _interp(pz, px, zB)) * sx,
-             (_interp(pz, py, zA) - _interp(pz, py, zB)) * sy,
-             (zA - zB) * dz])
-    return Fb, S, pz, py, px, zmin, zmax, zP
+    Wp = np.column_stack([pts[:, 2] * sx, pts[:, 1] * sy, pts[:, 0] * dz])   # world[x,y,z]（クリック順のまま）
+    seg = np.linalg.norm(np.diff(Wp, axis=0), axis=1)
+    s = np.concatenate([[0.0], np.cumsum(seg)])
+    L = float(s[-1])
+    if L < 1e-6:
+        return None
+    sP = float(np.clip(sP, 0.0, L))
+    def _at(sq):
+        sq = min(L, max(0.0, sq))
+        return np.array([np.interp(sq, s, Wp[:, 0]), np.interp(sq, s, Wp[:, 1]), np.interp(sq, s, Wp[:, 2])])
+    Fb = _at(sP)
+    S = nrm(_at(min(L, sP + 2.0)) - _at(max(0.0, sP - 2.0)))                # 口→遠位（弧長増加）向き
+    return Fb, S, s, Wp, 0.0, L, sP
 
 
 def ice_geometry(path_pts, zP, theta_deg, b1_deg, b2_deg, sx, sy, dz, tip_high_z=True):
@@ -174,46 +187,43 @@ def ice_image(vol, sx, sy, dz, geom, wl=WL_DEFAULT, ww=WW_DEFAULT, flip=False):
 
 
 # ===== 偏向で曲がる先端（3D linkage用・定曲率円弧）=====
-def bend_tip(path_pts, zP, theta_deg, b1_deg, b2_deg, sx, sy, dz,
+def bend_tip_s(path_pts, sP, theta_deg, b1_deg, b2_deg, sx, sy, dz,
              tip_high_z=True, Lb=30.0, shaft_len=90.0):
-    """先端30mm近位を支点に、A/P+L/R合成方向へ全角βの円弧で曲げる。
-    shaft_len: 近位シャフトの最短全長(mm)。TIPS の外筒(cannula_len=90)に合わせてある。
-    返り値 dict: F(支点), orange(F→先端のポリライン Nx3), Tp(曲がった先端), t1(先端接線)。"""
-    fr = _path_frame(path_pts, zP, sx, sy, dz)       # 円環依存を断つ（ice_geometryを呼ばない）
+    """先端30mm近位を支点に、A/P+L/R合成方向へ全角βの円弧で曲げる（EUS: 弧長パラメータ版）。
+    sP=弧長(mm,口側=0)。tip_high_z=True で先端は遠位(挿入先)側、False で口側。
+    返り値 dict: F(支点), orange(F→先端 Nx3), Tp(曲がった先端), t1(先端接線), apOn, shaft, S。"""
+    fr = _path_frame_s(path_pts, sP, sx, sy, dz)
     if fr is None:
         return None
-    apOn, S, pz, py, px, zmin, zmax, zP = fr
+    apOn, S, s, Wp, smin, L, sP = fr
     apOn = apOn.copy()
-    dd = 1.0 if tip_high_z else -1.0
+    def _at(sq):
+        sq = min(L, max(0.0, sq))
+        return np.array([np.interp(sq, s, Wp[:, 0]), np.interp(sq, s, Wp[:, 1]), np.interp(sq, s, Wp[:, 2])])
+    dd = 1.0 if tip_high_z else -1.0                     # tip 方向（+1=遠位/弧長増加, -1=口側）
     td3 = nrm(dd * S)
     b1r, b2r = np.radians(b1_deg), np.radians(b2_deg)
-    # 遠位ポリライン(先端→近位, 累積長 Lb まで)
-    distal = [apOn.copy()]; acc = 0.0; pr = apOn.copy(); zz = zP - dd; zf = zP
-    while (zz >= zmin if dd > 0 else zz <= zmax):
-        p = np.array([_interp(pz, px, zz) * sx, _interp(pz, py, zz) * sy, zz * dz])
-        acc += np.linalg.norm(p - pr); pr = p; distal.append(p); zf = zz
+    # 遠位ポリライン：apex(sP)から tip 方向へ 累積長 Lb まで（1mm刻み）
+    distal = [apOn.copy()]; acc = 0.0; pr = apOn.copy(); sq = sP + dd * 1.0
+    while (sq <= L if dd > 0 else sq >= 0.0):
+        p = _at(sq); acc += float(np.linalg.norm(p - pr)); pr = p; distal.append(p); sf = sq
         if acc >= Lb:
             break
-        zz -= dd
-    md = len(distal); F = distal[-1].copy()
-    # 近位シャフト(灰): F より近位の経路点 → 末尾でFへ接続
-    shaft = []
-    z2 = zf - dd
-    while (z2 >= zmin if dd > 0 else z2 <= zmax):
-        shaft.append(np.array([_interp(pz, px, z2) * sx, _interp(pz, py, z2) * sy, z2 * dz]))
-        z2 -= 2 * dd
-    shaft = shaft[::-1]; shaft.append(F)
-    # 近位側をまっすぐ延長する。実機の ICE カテーテルは大腿静脈から入っており、シャフトは
-    # 撮影範囲の外まで続いている。クリックした IVC パスの端で切ると数十mmの切り株になり、
-    # 同じ画面に描かれる TIPS の外筒（Entry から頸静脈側へ 90mm）より短く見えてしまう。
-    # 近位端の接線方向へ、全長が shaft_len に届くまで一直線に伸ばす。
-    if len(shaft) >= 2:
-        seg = np.linalg.norm(np.diff(np.asarray(shaft, float), axis=0), axis=1)
-        have = float(seg.sum())
-        u = nrm(np.asarray(shaft[0], float) - np.asarray(shaft[1], float))   # 近位向き
+        sq += dd * 1.0
     else:
-        have = 0.0
-        u = nrm(F - distal[-2]) if md >= 2 else -td3                          # 点が足りない時は先端の逆向き
+        sf = sP
+    md = len(distal); F = distal[-1].copy()
+    # 近位シャフト（口側＝反tip方向）
+    shaft = []; s2 = sf - dd * 2.0
+    while (0.0 <= s2 <= L):
+        shaft.append(_at(s2)); s2 -= dd * 2.0
+    shaft = shaft[::-1]; shaft.append(F)
+    # 近位を接線方向へ延長（実機のスコープは撮影範囲外まで続く＝口側へ長い）
+    if len(shaft) >= 2:
+        seg2 = np.linalg.norm(np.diff(np.asarray(shaft, float), axis=0), axis=1)
+        have = float(seg2.sum()); u = nrm(np.asarray(shaft[0], float) - np.asarray(shaft[1], float))
+    else:
+        have = 0.0; u = nrm(F - distal[-2]) if md >= 2 else -td3
     if have < shaft_len and np.linalg.norm(u) > 1e-6:
         shaft = [np.asarray(shaft[0], float) + u * (shaft_len - have)] + list(shaft)
     t0 = nrm((distal[-2] if md >= 2 else distal[0]) - F)
@@ -236,7 +246,80 @@ def bend_tip(path_pts, zP, theta_deg, b1_deg, b2_deg, sx, sy, dz,
     return dict(F=F, orange=np.array(orange), Tp=Tp, t1=t1, apOn=apOn, shaft=np.array(shaft), S=S)
 
 
-# ===== 針（Entry→Target を結ぶ円弧、curve角で弓なり, 0=直線）=====
+def eus_scope_glyph(Tp, t1, Vp, sect, fan_half, tip_len=38.0, tip_dia=14.6, r0=10.0, bump=2.6, arc_n=14):
+    """EUSコンベックス内視鏡の先端グリフ（撮像面(sect,Vp)内のworld 3D点列）。
+    実機 GF-UCT260 級（先端部外径 14.6mm・前方斜視の凸アレイ）に寄せた造形：
+      ・先端硬性部は *まっすぐ*（硬いので自身は曲がらない）。軸 t1 に沿う丸角カプセル。
+        （曲がるのは近位の軟性シャフト側＝path。先生「あり得ない角度で曲がる」の是正）
+      ・その +Vp 面の遠位寄りに探触子（コンベックスアレイ）が凸に *出っ張り*、そこから扇が出る
+        （ICE と同じく隆起で「ビームの出所」を明示・先生指示 2026-07-16）。
+    返り値 dict:
+      tip_outline = 先端硬性部の閉ポリゴン（丸角カプセル）
+      transducer  = 探触子の凸面ポリゴン（+Vp側の隆起＝ビーム出射面）
+      apex        = 扇の仮想頂点（凸面の奥 r0）
+      sect        = 扇の広がり方向（=入力 sect）
+    """
+    t1 = nrm(np.asarray(t1, float))
+    Vp = np.asarray(Vp, float); Vp = nrm(Vp - (Vp @ t1) * t1)      # 側射（面内・軸直交）に正規化
+    sect = np.asarray(sect, float); sect = nrm(sect - (sect @ Vp) * Vp)  # 扇の広がり（≈t1）
+    hw = tip_dia / 2.0
+    B1 = np.asarray(Tp, float)                                     # 遠位端
+    B0 = B1 - tip_len * t1                                         # 硬性部の付け根（近位）
+    # --- 先端硬性部カプセル（-Vp背側=平ら / 遠位端=半円で丸め / +Vp腹側=平ら）---
+    caps = [B0 - hw * Vp, B1 - hw * Vp]
+    for k in range(arc_n + 1):                                     # 遠位端の半円（-Vp→遠位→+Vp）
+        a = -np.pi / 2 + np.pi * k / arc_n
+        caps.append(B1 + hw * (np.sin(a) * Vp + np.cos(a) * t1))
+    caps.append(B0 + hw * Vp)
+    tip_outline = np.array(caps)
+    # --- 探触子（コンベックスアレイ）：+Vp面の遠位寄りに凸弧で出っ張らせる ---
+    surf_c = B1 - 0.32 * tip_len * t1 + (hw + bump) * Vp           # 面より bump だけ突き出た探触子中心
+    A = surf_c - r0 * Vp                                           # 扇の仮想頂点（凸面の奥 r0）
+    phis = np.linspace(-fan_half, fan_half, 2 * arc_n + 1)
+    arc = np.array([A + r0 * (np.cos(ph) * Vp + np.sin(ph) * sect) for ph in phis])   # 凸面（ビーム出射面）
+    root0 = arc[0] - bump * 1.6 * Vp                               # 弧の両端を面側へ落として閉じる（隆起の根元）
+    root1 = arc[-1] - bump * 1.6 * Vp
+    transducer = np.vstack([arc, root1, root0])
+    return dict(tip_outline=tip_outline, transducer=transducer, apex=A, sect=sect)
+
+
+def echo_filter(img, depth_atten=1.4, speckle=0.32, seed=12345):
+    """CTのreslice像(uint8)を『エコー風』に加工（厳密な音響シミュではなく見た目の近似）。
+      ①境界を明るく（エコー＝界面反射）②深さ減衰（下＝深部ほど暗い）③スペックル（乗算ノイズ）④log圧縮。
+    先生要望：CTをエコーのようにフィルタ（On/Off）。scipy が無い環境では境界強調を省いた簡易版で返す。"""
+    f = np.asarray(img, np.float32) / 255.0
+    try:
+        from scipy import ndimage
+        gy = ndimage.sobel(f, axis=0); gx = ndimage.sobel(f, axis=1)
+        grad = np.hypot(gx, gy); grad = grad / (grad.max() + 1e-6)
+    except Exception:
+        grad = np.zeros_like(f)
+    base = 0.35 * f + 0.9 * grad                              # 軟部の弱い散乱＋界面の強い反射
+    H = f.shape[0]; depth = np.arange(H, dtype=np.float32)[:, None] / max(1, H)
+    base = base * np.exp(-depth_atten * depth)               # 深さ減衰（下＝深部ほど暗い）
+    rng = np.random.default_rng(seed)                         # 固定seed＝毎フレーム同じ（ちらつかない）
+    base = base * np.clip(1.0 + speckle * rng.standard_normal(f.shape).astype(np.float32), 0.2, 2.0)
+    out = np.log1p(6.0 * np.clip(base, 0.0, None)); out = out / (out.max() + 1e-6)
+    return (np.clip(out, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+
+def eus_needle_ray(Tp, t1, Vp, sect, elevator_deg, length=95.0, tip_len=38.0, tip_dia=14.6):
+    """穿刺針の3D経路（実機EUS準拠）。針は *穿刺チャンネル遠位端＝探触子の近位（起上台の位置）* から出て、
+    走査面(Vp,sect)内を、スコープ軸(sect)から起上台の lead-out 角だけビーム側(+Vp)へ持ち上げた方向に
+    まっすぐ進む（co-planar 拘束＝面外自由度なし）。elevator_deg=起上台の出射角（面内・機種依存で概ね30–50°）。
+    length=針の伸展長(mm, 最大~9cm)。返り値 dict(exit=出口, needle=[出口,先端], dir=単位方向, lead_deg)。"""
+    t1 = nrm(np.asarray(t1, float))
+    Vp = np.asarray(Vp, float); Vp = nrm(Vp - (Vp @ t1) * t1)          # 側射（面内・軸直交）
+    sect = np.asarray(sect, float); sect = nrm(sect - (sect @ Vp) * Vp)  # 扇の広がり（≈軸・遠位向き）
+    hw = tip_dia / 2.0
+    B1 = np.asarray(Tp, float)
+    exit_pt = B1 - 0.52 * tip_len * sect + 0.9 * hw * Vp               # +Vp面・探触子より少し近位＝起上台の出口
+    lead = np.radians(float(elevator_deg))
+    d = nrm(np.cos(lead) * sect + np.sin(lead) * Vp)                    # 軸(遠位)からビーム側へ lead 角持ち上げ（面内）
+    tip = exit_pt + length * d
+    return dict(exit=exit_pt, needle=np.array([exit_pt, tip]), dir=d, lead_deg=float(elevator_deg))
+
+
 def needle_path(entry, target, curve_deg, n=44):
     P = np.asarray(entry, float); T = np.asarray(target, float)
     C = T - P; d = float(np.linalg.norm(C))
@@ -295,6 +378,106 @@ def needle_path3(axis, entry, target, straight=False, n=44):
     out = [P + (rad * np.cos(a0 + dang * i / (n - 1))) * t0
            + (r + rad * np.sin(a0 + dang * i / (n - 1))) * ey for i in range(n)]
     return np.array(out)
+
+
+# ===== 経路パラメータ化の変種（術式プリセット PATH_PARAM で選択）=====
+# "z": IVC のような体軸単調の芯線。位置 p はZスライス値（TIPS/ICE）。
+# "s": 食道→胃→十二指腸のような z 非単調の管腔。位置 p は弧長mm・口側0（EUS）。
+# 出力契約（bend_tip の dict キー）は両変種で同一。_path_frame のタプル構成は変種毎に異なる。
+
+def _path_frame_z(path_pts, zP, sx, sy, dz):
+    """path上のzPでの頂点Fbと軸接線S（＋補間用配列）を返す。≥2点必須・無効ならNone。"""
+    pts = np.asarray(path_pts, float)
+    if pts.shape[0] < 2:
+        return None
+    order = np.argsort(pts[:, 0])
+    pz, py, px = pts[order, 0], pts[order, 1], pts[order, 2]
+    zmin, zmax = float(pz[0]), float(pz[-1])
+    zP = float(np.clip(zP, zmin, zmax))
+    Fb = np.array([_interp(pz, px, zP) * sx, _interp(pz, py, zP) * sy, zP * dz])
+    zA, zB = min(zmax, zP + 2), max(zmin, zP - 2)
+    S = nrm([(_interp(pz, px, zA) - _interp(pz, px, zB)) * sx,
+             (_interp(pz, py, zA) - _interp(pz, py, zB)) * sy,
+             (zA - zB) * dz])
+    return Fb, S, pz, py, px, zmin, zmax, zP
+
+
+
+def bend_tip_z(path_pts, zP, theta_deg, b1_deg, b2_deg, sx, sy, dz,
+             tip_high_z=True, Lb=30.0, shaft_len=90.0):
+    """先端30mm近位を支点に、A/P+L/R合成方向へ全角βの円弧で曲げる。
+    shaft_len: 近位シャフトの最短全長(mm)。TIPS の外筒(cannula_len=90)に合わせてある。
+    返り値 dict: F(支点), orange(F→先端のポリライン Nx3), Tp(曲がった先端), t1(先端接線)。"""
+    fr = _path_frame_z(path_pts, zP, sx, sy, dz)       # 円環依存を断つ（ice_geometryを呼ばない）
+    if fr is None:
+        return None
+    apOn, S, pz, py, px, zmin, zmax, zP = fr
+    apOn = apOn.copy()
+    dd = 1.0 if tip_high_z else -1.0
+    td3 = nrm(dd * S)
+    b1r, b2r = np.radians(b1_deg), np.radians(b2_deg)
+    # 遠位ポリライン(先端→近位, 累積長 Lb まで)
+    distal = [apOn.copy()]; acc = 0.0; pr = apOn.copy(); zz = zP - dd; zf = zP
+    while (zz >= zmin if dd > 0 else zz <= zmax):
+        p = np.array([_interp(pz, px, zz) * sx, _interp(pz, py, zz) * sy, zz * dz])
+        acc += np.linalg.norm(p - pr); pr = p; distal.append(p); zf = zz
+        if acc >= Lb:
+            break
+        zz -= dd
+    md = len(distal); F = distal[-1].copy()
+    # 近位シャフト(灰): F より近位の経路点 → 末尾でFへ接続
+    shaft = []
+    z2 = zf - dd
+    while (z2 >= zmin if dd > 0 else z2 <= zmax):
+        shaft.append(np.array([_interp(pz, px, z2) * sx, _interp(pz, py, z2) * sy, z2 * dz]))
+        z2 -= 2 * dd
+    shaft = shaft[::-1]; shaft.append(F)
+    # 近位側をまっすぐ延長する。実機の ICE カテーテルは大腿静脈から入っており、シャフトは
+    # 撮影範囲の外まで続いている。クリックした IVC パスの端で切ると数十mmの切り株になり、
+    # 同じ画面に描かれる TIPS の外筒（Entry から頸静脈側へ 90mm）より短く見えてしまう。
+    # 近位端の接線方向へ、全長が shaft_len に届くまで一直線に伸ばす。
+    if len(shaft) >= 2:
+        seg = np.linalg.norm(np.diff(np.asarray(shaft, float), axis=0), axis=1)
+        have = float(seg.sum())
+        u = nrm(np.asarray(shaft[0], float) - np.asarray(shaft[1], float))   # 近位向き
+    else:
+        have = 0.0
+        u = nrm(F - distal[-2]) if md >= 2 else -td3                          # 点が足りない時は先端の逆向き
+    if have < shaft_len and np.linalg.norm(u) > 1e-6:
+        shaft = [np.asarray(shaft[0], float) + u * (shaft_len - have)] + list(shaft)
+    t0 = nrm((distal[-2] if md >= 2 else distal[0]) - F)
+    if np.linalg.norm(t0) < 1e-6:
+        t0 = td3
+    Vp0 = np.array([np.cos(np.radians(theta_deg)), np.sin(np.radians(theta_deg)), 0.0])
+    nAP = Vp0 - (Vp0 @ t0) * t0
+    nAP = nrm(nAP) if np.linalg.norm(nAP) > 1e-6 else np.array([1.0, 0, 0])
+    nLR = nrm(np.cross(t0, nAP))
+    n = b1r * nAP + b2r * nLR
+    beta = np.hypot(b1r, b2r)
+    if beta > 1e-4 and np.linalg.norm(n) > 1e-9:
+        n = nrm(n); tot = acc if acc > 1e-6 else Lb; rho = tot / beta
+        NB = (md - 1) if md > 2 else 10
+        orange = [F + rho * np.sin(beta * i / NB) * t0 + rho * (1 - np.cos(beta * i / NB)) * n
+                  for i in range(NB + 1)]
+        Tp = orange[-1].copy(); t1 = nrm(orange[-1] - orange[-2])
+    else:
+        orange = [distal[i] for i in range(md - 1, -1, -1)]; Tp = apOn.copy(); t1 = td3
+    return dict(F=F, orange=np.array(orange), Tp=Tp, t1=t1, apOn=apOn, shaft=np.array(shaft), S=S)
+
+
+
+def _path_frame(path_pts, p, sx, sy, dz):
+    """パス上の位置 p での頂点と接線。p の解釈は PATH_PARAM（術式プリセット）で切替。"""
+    fn = _path_frame_s if PATH_PARAM == "s" else _path_frame_z
+    return fn(path_pts, p, sx, sy, dz)
+
+
+def bend_tip(path_pts, p, theta_deg, b1_deg, b2_deg, sx, sy, dz,
+             tip_high_z=True, Lb=30.0, shaft_len=90.0):
+    """偏向で曲がる先端（PATH_PARAM で _z / _s 変種へディスパッチ。出力の dict は同一契約）。"""
+    fn = bend_tip_s if PATH_PARAM == "s" else bend_tip_z
+    return fn(path_pts, p, theta_deg, b1_deg, b2_deg, sx, sy, dz,
+              tip_high_z=tip_high_z, Lb=Lb, shaft_len=shaft_len)
 
 
 # ===== RUPS / Colapinto デバイス機構（Step2の針プランニング）=====
@@ -562,6 +745,27 @@ def ice_coplanarity(geom, entry, target, step_deg=0.5):
     return dict(off_entry=off_e, off_target=off_t, best_theta=best_th, best_off=best_off)
 
 
+def sector_shortfall(geom, P):
+    """点 P が「実際に画面へ描かれる扇の領域」からどれだけ外れているか(mm)。0=扇の中。
+
+    3点固定の旧実装は「無限に伸ばした画像平面に乗るか」しか見ていなかったため、
+    数学上は残差ほぼ0でも、点が扇の深達(R)の先や扇角の外にあると絵に出てこない
+    （2026-07-18 先生報告「二つはロックして見えるが Entry が考慮されていない」の真因）。
+    ICE は頂点=Tp・r∈[0,R]、経腹コンベックスは仮想頂点=Tp−r0·Vp・r∈[r0,R] の環状扇。
+    面内座標 (u=ビーム方向, w=側方) で扇領域へクランプした最近点までの距離を返す。"""
+    Tp = np.asarray(geom["Tp"], float)
+    Vp = nrm(np.asarray(geom["Vp"], float)); Sp = nrm(np.asarray(geom["Sp"], float))
+    r0 = float(geom.get("r0", 0.0)); R = float(geom["R"]); fan = float(geom["fan_half"])
+    apex = Tp - r0 * Vp                                    # ICE(r0=0)なら apex=Tp
+    d = np.asarray(P, float) - apex
+    u = float(d @ Vp); w = float(d @ Sp)                   # 面内成分だけで判定（面外は off_* が担当）
+    r = float(np.hypot(u, w))
+    phi = float(np.arctan2(w, u)) if r > 1e-9 else 0.0
+    pc = min(max(phi, -fan), fan)                          # 扇角へクランプ
+    rc = min(max(r, r0), R)                                # 深さ方向へクランプ
+    return float(np.hypot(rc * np.cos(pc) - u, rc * np.sin(pc) - w))
+
+
 def solve_theta_3points(path_pts, zP, b1_deg, b2_deg, sx, sy, dz, entry, target,
                         tip_high_z=True, coarse=4.0, span=6.0, fine=0.25):
     """Entry と Target が ICE 画像面にいちばんよく乗る θ(度) を、**真の幾何で**解く。
@@ -571,10 +775,14 @@ def solve_theta_3points(path_pts, zP, b1_deg, b2_deg, sx, sy, dz, entry, target,
     近似のままだと「言われたとおり θ を回したのに合わない」ことが起きるので、ここは候補 θ ごとに
     ice_geometry を作り直して評価する。粗く一周して最良点を掴み、その周りだけ細かく詰める。
 
+    評価は「面外距離」＋「扇の見える範囲からのはみ出し(sector_shortfall)」（2026-07-18）。
+    面に乗せるだけだと、点が扇の外（深達の先・扇角の外・背側）でも"解けた"ことになり、
+    画面では Entry が無視されたように見えるため。
+
     自由度4（押し引き・θ・A/P偏向・L/R偏向）に対し拘束は2本（Entry と Target が面上）なので、
     θ だけでは一般に残差が残る。残差は呼び出し側が mm で表示する（＝ごまかさない）。
 
-    返り値 dict(theta, off_entry, off_target, resid)。パス不足などで無効なら None。
+    返り値 dict(theta, off_entry, off_target, resid, vis_entry, vis_target)。無効なら None。
     """
     E = np.asarray(entry, float); T = np.asarray(target, float)
 
@@ -588,14 +796,18 @@ def solve_theta_3points(path_pts, zP, b1_deg, b2_deg, sx, sy, dz, entry, target,
         if m < 1e-9:
             return None
         n = n / m
-        return float((E - Tp) @ n), float((T - Tp) @ n)
+        return (float((E - Tp) @ n), float((T - Tp) @ n),
+                sector_shortfall(g, E), sector_shortfall(g, T))
+
+    def _score(o):
+        return max(abs(o[0]), abs(o[1])) + o[2] + o[3]
 
     best = None
     th = 0.0
     while th < 360.0:                                      # 粗く一周
         o = _off(th)
         if o is not None:
-            r = max(abs(o[0]), abs(o[1]))
+            r = _score(o)
             if best is None or r < best[0]:
                 best = (r, th, o)
         th += coarse
@@ -606,11 +818,118 @@ def solve_theta_3points(path_pts, zP, b1_deg, b2_deg, sx, sy, dz, entry, target,
     while th <= hi:
         o = _off(th)
         if o is not None:
-            r = max(abs(o[0]), abs(o[1]))
+            r = _score(o)
             if r < best[0]:
                 best = (r, th, o)
         th += fine
-    return dict(theta=best[1] % 360.0, off_entry=best[2][0], off_target=best[2][1], resid=best[0])
+    o = best[2]
+    return dict(theta=best[1] % 360.0, off_entry=o[0], off_target=o[1],
+                resid=max(abs(o[0]), abs(o[1])), vis_entry=o[2], vis_target=o[3])
+
+
+def aim_beam_at_target(path_pts, zP, b1_deg, b2_deg, sx, sy, dz, target,
+                       tip_high_z=True, coarse=3.0, span=5.0, fine=0.2):
+    """扇の *中心軸(ビーム Vp)* を Target に向ける θ(度) を解く（＝探触子からTargetへエコーを合わせる）。
+    solve_theta_3points は「Targetが画像"面"に乗る」θ（面内のどこでも可＝扇の端でもよい）だが、
+    こちらは「ビームの中心が Target を指す」＝ Vp と (Target−探触子) 方向の一致度(内積)を最大化する。
+    co-planar 拘束で Vp は軸に直交な面内でしか回らないので、Targetの軸方向ずれは残る（それは
+    プローブ位置＝center_arclength で詰める）。返り値 dict(theta, align) or None。"""
+    T = np.asarray(target, float)
+
+    def _align(th):
+        g = ice_geometry(path_pts, zP, th, b1_deg, b2_deg, sx, sy, dz, tip_high_z=tip_high_z)
+        if g is None:
+            return None
+        Tp = np.asarray(g["Tp"], float); Vp = nrm(np.asarray(g["Vp"], float))
+        d = T - Tp; n = np.linalg.norm(d)
+        if n < 1e-6:
+            return None
+        return float((d / n) @ Vp)                       # 1=ビーム正面にTarget / -1=真後ろ
+
+    best = None; th = 0.0
+    while th < 360.0:                                     # 粗く一周して最良を掴む
+        a = _align(th)
+        if a is not None and (best is None or a > best[0]):
+            best = (a, th)
+        th += coarse
+    if best is None:
+        return None
+    lo = best[1] - span; th = lo                         # 最良点の周りを細かく
+    while th <= best[1] + span:
+        a = _align(th)
+        if a is not None and a > best[0]:
+            best = (a, th)
+        th += fine
+    # 解いた θ での軸方向ズレ（Targetが扇の中心からどれだけ横にずれているか＝θでは消せない分）
+    g = ice_geometry(path_pts, zP, best[1], b1_deg, b2_deg, sx, sy, dz, tip_high_z=tip_high_z)
+    lateral = depth = 0.0
+    if g is not None:
+        Tp = np.asarray(g["Tp"], float); Vp = nrm(np.asarray(g["Vp"], float)); Sp = nrm(np.asarray(g["Sp"], float))
+        d = T - Tp; lateral = abs(float(d @ Sp)); depth = float(d @ Vp)
+    return dict(theta=best[1] % 360.0, align=best[0], lateral=lateral, depth=depth)
+
+
+def aim_needle_at_target(path_pts, zP, b1_deg, b2_deg, elevator_deg, sx, sy, dz, target,
+                         needle_len=95.0, tip_high_z=True, coarse=3.0, span=5.0, fine=0.2):
+    """穿刺針の走行線が Target を通る θ を解く（＝針を Target に当て続ける／針追尾モード）。
+    各θで先端グリフ→針レイ(eus_needle_ray)を作り、Target から針レイへの距離を最小化する。
+    返り値 dict(theta, miss=Targetと針線の最短距離mm)。無効なら None。"""
+    T = np.asarray(target, float)
+
+    def _miss(th):
+        g = ice_geometry(path_pts, zP, th, b1_deg, b2_deg, sx, sy, dz, tip_high_z=tip_high_z)
+        if g is None:
+            return None
+        Tp = np.asarray(g["Tp"], float); Vp = nrm(g["Vp"]); Sp = nrm(g["Sp"])   # Sp=先端接線≈軸/扇の広がり
+        nr = eus_needle_ray(Tp, Sp, Vp, Sp, elevator_deg, length=needle_len)
+        e = np.asarray(nr["exit"], float); d = nrm(np.asarray(nr["dir"], float))
+        w = T - e; t = max(0.0, float(w @ d))                                   # 針は前方(t>=0)のみ
+        return float(np.linalg.norm(w - t * d))
+
+    best = None; th = 0.0
+    while th < 360.0:
+        m = _miss(th)
+        if m is not None and (best is None or m < best[0]):
+            best = (m, th)
+        th += coarse
+    if best is None:
+        return None
+    lo = best[1] - span; th = lo
+    while th <= best[1] + span:
+        m = _miss(th)
+        if m is not None and m < best[0]:
+            best = (m, th)
+        th += fine
+    return dict(theta=best[1] % 360.0, miss=best[0])
+
+
+def center_arclength(path_pts, target, sx, sy, dz):
+    """腫瘤(target world[x,y,z])が扇の *側方中心*（スコープ軸に直交＝EUS画像の真ん中）に来る
+    プローブ弧長位置 sP(mm, 口側=0) を返す。深達 R_DEPTH 以内で、側方ズレ |(T-P)·軸接線| が
+    最小の弧長点を選ぶ（＝腫瘤を扇の正面に据える）。パス不足なら None。"""
+    fr = _path_frame_s(path_pts, 0.0, sx, sy, dz)
+    if fr is None:
+        return None
+    _, _, s, Wp, _, L, _ = fr
+    T = np.asarray(target, float)
+
+    def _at(sq):
+        sq = min(L, max(0.0, sq))
+        return np.array([np.interp(sq, s, Wp[:, 0]), np.interp(sq, s, Wp[:, 1]), np.interp(sq, s, Wp[:, 2])])
+
+    def _tan(sq):
+        return nrm(_at(min(L, sq + 2.0)) - _at(max(0.0, sq - 2.0)))
+
+    best = None
+    for sq in np.linspace(0.0, L, max(2, int(L / 2.0) + 1)):   # 2mm刻みでスキャン
+        P = _at(sq); Sp = _tan(sq); d = T - P
+        dist = float(np.linalg.norm(d))
+        if dist < 3.0 or dist > R_DEPTH:                       # 近すぎ/深達外は不可
+            continue
+        lat = abs(float(d @ Sp))                               # 側方(軸方向成分)=扇中心からのズレ
+        if best is None or lat < best[0]:
+            best = (lat, float(sq))
+    return None if best is None else best[1]
 
 
 # ===== 経腹コンベックス・プローブの扇幾何（ice_image が消費する dict を返す）=====
@@ -674,6 +993,197 @@ def best_surface_theta(contact, inward_normal, entry, target, plane_axis=(0.0, 0
         if off < best_off:
             best_off, best_th = off, i * step_deg
     return best_th
+
+
+def _path_pos_range(path_pts, sx, sy, dz):
+    """プローブ位置パラメータの有効範囲 (lo, hi)。PATH_PARAM="z" は Zスライス値、"s" は弧長mm。"""
+    fr = _path_frame(path_pts, 0.0, sx, sy, dz)
+    if fr is None:
+        return None
+    return (float(fr[4]), float(fr[5])) if PATH_PARAM == "s" else (float(fr[5]), float(fr[6]))
+
+
+def solve_theta_pos_3points(path_pts, pos0, b1_deg, b2_deg, sx, sy, dz, entry, target,
+                            tip_high_z=True):
+    """3点固定の「乗せ直し」完全版：θ(回転) と プローブ位置(押し引き) を同時に解き、
+    Entry / Target を扇平面へ乗せ切る（未知数2=拘束2なので一般に残差ほぼ0）。
+
+    旧 solve_theta_3points は θ 単独＝原理的に残差が残る設計（押し引きは手で詰める）だったが、
+    2026-07-18 先生要望「3点固定なのに面に乗らない」を受けて位置も解く本関数を追加。
+    全域探索のため連続追従（ドラッグ中の毎フレーム）には使わず、ON 時と Entry/Target 変更時に呼ぶ。
+    同率最適が並ぶ場合は現在位置 pos0 に最も近い解（プローブを無闇に飛ばさない）。
+    評価は面外距離＋扇はみ出し(sector_shortfall)＝「面に乗る」だけでなく「絵の中に入る」（2026-07-18）。
+    返り値 dict(theta, pos, off_entry, off_target, resid, vis_entry, vis_target)。無効なら None。"""
+    rng = _path_pos_range(path_pts, sx, sy, dz)
+    if rng is None:
+        return None
+    lo, hi = rng
+    if hi - lo < 1e-6:
+        s = solve_theta_3points(path_pts, pos0, b1_deg, b2_deg, sx, sy, dz, entry, target,
+                                tip_high_z=tip_high_z)
+        if s is None:
+            return None
+        s = dict(s); s["pos"] = float(pos0)
+        return s
+    E = np.asarray(entry, float); T = np.asarray(target, float)
+
+    def _score(th, pos):
+        g = ice_geometry(path_pts, pos, th, b1_deg, b2_deg, sx, sy, dz, tip_high_z=tip_high_z)
+        if g is None:
+            return None
+        Tp = np.asarray(g["Tp"], float)
+        n = np.cross(nrm(g["Vp"]), nrm(g["Sp"]))
+        m = np.linalg.norm(n)
+        if m < 1e-9:
+            return None
+        n = n / m
+        oe = float((E - Tp) @ n); ot = float((T - Tp) @ n)
+        vE = sector_shortfall(g, E); vT = sector_shortfall(g, T)
+        return max(abs(oe), abs(ot)) + vE + vT, (oe, ot, vE, vT)
+
+    best = None                    # (選好キー, resid生, θ, pos, (oe,ot))  キー=(residを0.01mm丸め, |pos-pos0|)
+    npos = 31
+    for i in range(npos):          # 粗い格子（位置 × θ 4°）
+        pos = lo + (hi - lo) * i / (npos - 1)
+        th = 0.0
+        while th < 360.0:
+            sc = _score(th, pos)
+            if sc is not None:
+                key = (round(sc[0], 2), abs(pos - pos0))
+                if best is None or key < best[0]:
+                    best = (key, sc[0], th, pos, sc[1])
+            th += 4.0
+    if best is None:
+        return None
+    dpos = (hi - lo) / (npos - 1)
+    for _ in range(3):             # θ→位置 の交互詰め（最良点の近傍のみ・谷が曲がっていても追える回数）
+        th0c, pos_c = best[2], best[3]
+        th = th0c - 5.0
+        while th <= th0c + 5.0 + 1e-9:
+            sc = _score(th % 360.0, pos_c)
+            if sc is not None:
+                key = (round(sc[0], 2), abs(pos_c - pos0))
+                if key < best[0]:
+                    best = (key, sc[0], th % 360.0, pos_c, sc[1])
+            th += 0.25
+        th_c = best[2]
+        step = max((hi - lo) / 600.0, 5e-4)
+        pos = max(lo, best[3] - 2.0 * dpos)
+        while pos <= min(hi, best[3] + 2.0 * dpos) + 1e-9:
+            sc = _score(th_c, pos)
+            if sc is not None:
+                key = (round(sc[0], 2), abs(pos - pos0))
+                if key < best[0]:
+                    best = (key, sc[0], th_c, float(pos), sc[1])
+            pos += step
+    oe, ot, vE, vT = best[4]
+    return dict(theta=float(best[2] % 360.0), pos=float(best[3]),
+                off_entry=float(oe), off_target=float(ot),
+                resid=float(max(abs(oe), abs(ot))), vis_entry=float(vE), vis_target=float(vT))
+
+
+def solve_surface_3points2(contact, inward_normal, tilt0, rock_deg, entry, target,
+                           plane_axis, sx, sy, dz, tilt_lo=-80.0, tilt_hi=80.0):
+    """経腹3点固定の「乗せ直し」完全版：回転θ と あおり(tilt) を同時に解き Entry/Target を扇平面へ。
+    首振り(rock)は術者の手に残す。同率なら現在の tilt0 に近い解（プローブ姿勢を無闇に変えない）。
+    連続追従には従来の solve_surface_3points（θ単独）を使い、本関数は ON 時と点変更時のみ。
+    返り値 dict(theta, tilt, off_entry, off_target, resid)。"""
+    C = np.asarray(contact, float)
+    E = np.asarray(entry, float); T = np.asarray(target, float)
+
+    def _score(th, ti):
+        g = surface_geometry(contact, inward_normal, th, ti, rock_deg, sx, sy, dz, plane_axis=plane_axis)
+        if g is None:
+            return None
+        n = np.cross(g["Vp"], g["Sp"]); m = np.linalg.norm(n)
+        if m < 1e-6:
+            return None
+        n = n / m
+        oe = float((E - C) @ n); ot = float((T - C) @ n)
+        vE = sector_shortfall(g, E); vT = sector_shortfall(g, T)   # 扇の絵に入ることも要求（2026-07-18）
+        return max(abs(oe), abs(ot)) + vE + vT, (oe, ot, vE, vT)
+
+    best = None
+    ti = tilt_lo
+    while ti <= tilt_hi + 1e-9:
+        th = 0.0
+        while th < 360.0:
+            sc = _score(th, ti)
+            if sc is not None:
+                key = (round(sc[0], 2), abs(ti - tilt0))
+                if best is None or key < best[0]:
+                    best = (key, sc[0], th, ti, sc[1])
+            th += 6.0
+        ti += 6.0
+    if best is None:
+        return dict(theta=0.0, tilt=float(tilt0), off_entry=0.0, off_target=0.0, resid=0.0,
+                    vis_entry=0.0, vis_target=0.0)
+    th0c, ti0c = best[2], best[3]
+    dth = -6.0
+    while dth <= 6.0 + 1e-9:
+        dti = -6.0
+        while dti <= 6.0 + 1e-9:
+            t2 = min(tilt_hi, max(tilt_lo, ti0c + dti))
+            sc = _score((th0c + dth) % 360.0, t2)
+            if sc is not None:
+                key = (round(sc[0], 2), abs(t2 - tilt0))
+                if key < best[0]:
+                    best = (key, sc[0], (th0c + dth) % 360.0, t2, sc[1])
+            dti += 1.0
+        dth += 0.5
+    oe, ot, vE, vT = best[4]
+    return dict(theta=float(best[2]), tilt=float(best[3]),
+                off_entry=float(oe), off_target=float(ot),
+                resid=float(max(abs(oe), abs(ot))), vis_entry=float(vE), vis_target=float(vT))
+
+
+def solve_surface_3points(contact, inward_normal, tilt_deg, rock_deg, entry, target,
+                          plane_axis, sx, sy, dz, step_deg=1.0):
+    """経腹プローブの3点固定＝接触点(扇の頂点)＋Entry＋Target が最もよく乗るように回転θを解く。
+      現在の傾き(tilt)/あおり(rock)はそのまま使う（＝ICEの偏向と同じく先生の手に残す）。
+      各θで surface_geometry を作り直し、扇平面(法線=Vp×Sp)からの Entry/Target の面外距離を最小化。
+      返り値 dict(theta, off_entry, off_target, resid) — ICEの solve_theta_3points と同じキー。"""
+    C = np.asarray(contact, float)
+    E = np.asarray(entry, float); T = np.asarray(target, float)
+    best_th, best_score, best_o = 0.0, 1e18, None
+    m = max(1, int(round(360.0 / step_deg)))
+    for i in range(m):
+        th = i * step_deg
+        g = surface_geometry(contact, inward_normal, th, tilt_deg, rock_deg, sx, sy, dz, plane_axis=plane_axis)
+        n = np.cross(g["Vp"], g["Sp"]); nn = np.linalg.norm(n)  # 扇平面の法線
+        if nn < 1e-6:
+            continue
+        n = n / nn
+        oe = float((E - C) @ n); ot = float((T - C) @ n)
+        vE = sector_shortfall(g, E); vT = sector_shortfall(g, T)   # 扇の絵に入ることも要求（2026-07-18）
+        score = max(abs(oe), abs(ot)) + vE + vT
+        if score < best_score:
+            best_score, best_th, best_o = score, th, (oe, ot, vE, vT)
+    if best_o is None:
+        return dict(theta=0.0, off_entry=0.0, off_target=0.0, resid=0.0, vis_entry=0.0, vis_target=0.0)
+    oe, ot, vE, vT = best_o
+    return dict(theta=best_th, off_entry=oe, off_target=ot, resid=max(abs(oe), abs(ot)),
+                vis_entry=vE, vis_target=vT)
+
+
+def catmull_rom(pts, n=12):
+    """点列を通る滑らかな曲線（Catmull-Rom スプライン）。各区間を n 分割した密な点列を返す。
+    手描き肝静脈を『終了』したとき、カクカクの折れ線＋節点を、なだらかな血管曲線にし直すのに使う。
+    点が2つ以下ならそのまま返す。"""
+    P = np.asarray(pts, float)
+    if len(P) < 3:
+        return P
+    ext = np.vstack([P[0], P, P[-1]])                      # 端点を複製して端まで通す
+    out = []
+    for i in range(1, len(ext) - 2):
+        p0, p1, p2, p3 = ext[i - 1], ext[i], ext[i + 1], ext[i + 2]
+        for t in np.linspace(0.0, 1.0, n, endpoint=False):
+            t2 = t * t; t3 = t2 * t
+            out.append(0.5 * (2 * p1 + (-p0 + p2) * t
+                              + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+                              + (-p0 + 3 * p1 - 3 * p2 + p3) * t3))
+    out.append(P[-1])
+    return np.asarray(out, float)
 
 
 def needle_glyph(p1, tip, width=2.2, taper=7.0):

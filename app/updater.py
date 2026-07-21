@@ -18,13 +18,15 @@ import tempfile
 import urllib.request
 import zipfile
 
+import preset
+
 IS_WIN = sys.platform == "win32"
 
-# 配布フォルダ（ローカル更新元）。$HOME 配下のみ＝個人特定パスを埋め込まない（git安全）。
-LOCAL_DIRS = ["~/Desktop/TIPS ICE Planner 配布"]
-APP_NAME = "TIPS ICE Planner.exe" if IS_WIN else "TIPS ICE Planner.app"
+# 配布フォルダ等の術式固有名は preset.py に集約。$HOME 配下のみ＝個人特定パスを埋め込まない（git安全）。
+LOCAL_DIRS = list(preset.DIST_LOCAL_DIRS)
+APP_NAME = preset.DIST_APP_BASENAME + (".exe" if IS_WIN else ".app")
 # build_release(mac)/build_windows_ci(Win) がそれぞれ毎回更新する配布物（=更新元の実体）
-DIST_ZIP = "TIPS-ICE-Planner-Windows.zip" if IS_WIN else "TIPS-ICE-Planner-Mac.zip"
+DIST_ZIP = preset.DIST_ZIP_WIN if IS_WIN else preset.DIST_ZIP_MAC
 
 
 def ver_tuple(s):
@@ -50,6 +52,21 @@ def is_translocated(path):
     """macOSの隔離実行(App Translocation)で読み取り専用の一時領域から起動されているか。
       この状態だと自己置換しても本体が変わらず更新ループになるため、自動更新を抑止する。"""
     return "/AppTranslocation/" in (path or "")
+
+
+def cleanup_stale_staging():
+    """過去の自己更新が残した staging（<app>.new / <app>.old）を起動時に掃除する。
+    入れ替えが成功すれば残らないが、途中で落ちると隣に残って紛らわしい
+    （2026-07-18 先生報告: /Applications に旧版の .app.new が放置されていた）。
+    実行中バンドルの“隣”だけを対象とし、失敗は無視（次回起動でまた試す）。"""
+    tgt = current_app_bundle()
+    if not tgt:
+        return
+    for suf in (".new", ".old"):
+        try:
+            shutil.rmtree(tgt + suf, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def find_update(current_version, update_url=None, timeout=5):

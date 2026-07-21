@@ -1,4 +1,4 @@
-"""入口のビュー（検査一覧＋サムネイル帯）。
+"""Miele Database 風の入口ビュー（検査一覧＋サムネイル帯）。
 
   上: 検査ごとに1行だけのスタディ表（読みやすい濃紺ゼブラ・Comment 列は編集可）。
   下: 選択スタディのシリーズをサムネイルで横並び（説明 + N img）。
@@ -22,8 +22,19 @@ def _sep():
 
 # 検査=1行。シリーズ名は下のサムネ帯に出すので Description 列との二重表示を廃止。
 # Restore列＝各行に埋め込みボタン(1/2/3)。患者ごとに直接紐づく＝「今どの行が選択中か」に依存しない(先生要望)。
-COLS = ["Patient", "Patient ID", "Institution", "Age", "Modality", "Acquired", "Series", "Images", "Description", "Restore", "Comment"]
-C_PATIENT, C_ID, C_INST, C_AGE, C_MOD, C_ACQ, C_NSER, C_NIMG, C_DESC, C_RESTORE, C_COMMENT = range(11)
+COLS = ["Patient", "Patient ID", "Institution", "Age", "Modality", "Acquired", "Imported",
+        "Series", "Images", "Description", "Restore", "Comment"]
+C_PATIENT, C_ID, C_INST, C_AGE, C_MOD, C_ACQ, C_IMP, C_NSER, C_NIMG, C_DESC, C_RESTORE, C_COMMENT = range(12)
+HEADER_KEY = "db_header_state_%d" % len(COLS)   # 列順の永続化キー。列数を含める＝列構成を変えると旧状態を自動で無視
+
+
+def _header_labels():
+    """ヘッダーは表示言語で貼り替える（撮影日=Acquired／取り込み日=Imported）。COLS はロジック用の固定ID、
+    こちらは見た目のラベル。列インデックス(C_*)は不変なので順序入れ替えとも両立する。"""
+    return [L("Patient", "患者"), L("Patient ID", "患者ID"), L("Institution", "施設"),
+            L("Age", "年齢"), L("Modality", "モダリティ"), L("Acquired", "撮影日"),
+            L("Imported", "取り込み日"), L("Series", "シリーズ"), L("Images", "画像数"),
+            L("Description", "説明"), L("Restore", "復元"), L("Comment", "コメント")]
 ROLE_STUDY = Qt.UserRole + 1       # study dict
 ROLE_STUDYUID = Qt.UserRole + 2
 ROLE_FILES = Qt.UserRole + 3       # サムネ item: series files
@@ -113,6 +124,7 @@ class ImportPickerDialog(QDialog):
 class DatabaseView(QWidget):
     openSeries = Signal(list, str)      # files of the chosen series, its study_uid
     restoreSession = Signal(str, int)   # study_uid, slot(1/2/3) — 保存済み作業状態の復元
+    sessionDeleted = Signal(str, int)   # study_uid, slot — 患者リスト側でスロットを削除した（ビューアのボタン更新用）
     langToggled = Signal()              # 言語切替ボタンが押された（実処理はMainWindow._toggle_langに一本化）
 
     def __init__(self, catalog):
@@ -146,7 +158,11 @@ class DatabaseView(QWidget):
         # --- 検査表（上） / サムネイル帯（下）---
         split = QSplitter(Qt.Vertical)
         self.tree = QTreeWidget(); self.tree.setColumnCount(len(COLS))
-        self.tree.setHeaderLabels(COLS)
+        self.tree.setHeaderLabels(_header_labels())
+        hdr = self.tree.header()
+        hdr.setSectionsMovable(True)                              # 列ヘッダーをドラッグして順番を入れ替え（先生要望）
+        hdr.setFirstSectionMovable(True)                          # 先頭(Patient)も動かせるように
+        hdr.sectionMoved.connect(self._save_header_state)         # 入れ替えたら順番を保存＝次回起動でも維持
         self.tree.setAlternatingRowColors(True)
         self.tree.setRootIsDecorated(False)                       # 子を持たない＝展開マーク不要
         self.tree.setUniformRowHeights(True)
@@ -177,9 +193,30 @@ class DatabaseView(QWidget):
         self.status = QLabel(""); self.status.setStyleSheet("color:#869bb2;")
         root.addWidget(self.status)
         self.retranslate()                                       # ツールバー文言＋reload()
+        self._restore_header_state()                             # 前回ドラッグした列順を復元
+
+    # ---- 列順の永続化（ヘッダーをドラッグして入れ替え）----
+    def _save_header_state(self, *a):
+        try:
+            import settings_store
+            b = bytes(self.tree.header().saveState().toBase64().data()).decode("ascii")
+            settings_store.store().setValue(HEADER_KEY, b)       # JSONに載せられるようbase64文字列で保存
+        except Exception:
+            pass
+
+    def _restore_header_state(self):
+        try:
+            import settings_store
+            from PySide6.QtCore import QByteArray
+            b = settings_store.store().value(HEADER_KEY, "")
+            if b:
+                self.tree.header().restoreState(QByteArray.fromBase64(b.encode("ascii")))
+        except Exception:
+            pass
 
     def retranslate(self):
         """現在のUI言語でツールバー等の文言を貼り替え、一覧を再構築（main._apply_language から呼ばれる）。"""
+        self.tree.setHeaderLabels(_header_labels())              # ヘッダーも表示言語に追従（撮影日/取り込み日 など）
         self.impBtn.setText(L("Import DICOM folder…", "DICOMフォルダを取り込み…"))
         self.openBtn.setText(L("Open", "開く"))
         self.delBtn.setText(L("Remove study", "検査を削除"))
@@ -212,7 +249,8 @@ class DatabaseView(QWidget):
             row = [""] * len(COLS)
             row[C_PATIENT] = name; row[C_ID] = pid; row[C_INST] = st.get("institution", "")
             row[C_AGE] = age; row[C_MOD] = st["modality"]
-            row[C_ACQ] = st["study_date"]; row[C_NSER] = str(nser); row[C_NIMG] = str(st["n_images"])
+            row[C_ACQ] = st["study_date"]; row[C_IMP] = st.get("imported", "")
+            row[C_NSER] = str(nser); row[C_NIMG] = str(st["n_images"])
             row[C_DESC] = st["study_desc"]; row[C_COMMENT] = st["comment"]
             it = QTreeWidgetItem(row)
             it.setData(0, ROLE_STUDY, st)
@@ -261,7 +299,7 @@ class DatabaseView(QWidget):
 
     def select_study(self, study_uid, open_if_single=True):
         """study_uid のスタディをツリーで選択しサムネ表示。相(シリーズ)が1つなら自動で開く。
-        外部から取り込んだ直後に呼ぶ。見つかれば True。"""
+        Mieleからの取り込み後に呼ぶ。見つかれば True。"""
         if not study_uid:
             return False
         for i in range(self.tree.topLevelItemCount()):
@@ -314,6 +352,7 @@ class DatabaseView(QWidget):
                   f"{who}のスロット{n}の保存を削除しますか？元に戻せません。"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
             self.cat.clear_session(uid, n)
+            self.sessionDeleted.emit(uid, n)
             w = self._make_restore_widget(uid)
             it = self._find_item_by_uid(uid)
             if it is not None:

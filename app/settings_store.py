@@ -69,6 +69,7 @@ def store():
 _MIGRATE_KEYS = [
     ("ui_lang", str), ("control_style", str),
     ("show_tips_on_startup", bool), ("next_tip_index", int),
+    ("donation_status", str), ("donation_last_ack", str),
 ]
 
 

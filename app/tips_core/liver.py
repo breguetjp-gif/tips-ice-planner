@@ -60,6 +60,77 @@ def _grow(seed, mask, max_iter=250):
     return g
 
 
+def _coarsen_any(m, c):
+    """各軸 c ボクセルのブロックを OR で粗格子化（前景を薄く消さないため any 集約）。"""
+    z, y, x = m.shape
+    mp = np.pad(m, ((0, (-z) % c), (0, (-y) % c), (0, (-x) % c)))
+    Z, Y, X = mp.shape
+    return mp.reshape(Z // c, c, Y // c, c, X // c, c).any((1, 3, 5))
+
+
+def largest_component(mask, max_iter=200, coarse=4):
+    """3Dマスクの、重心に最も近い種から連結する成分だけ残す（肝臓に紛れる遠い誤検出ブロブを除去）。
+    高速化のため粗格子(各軸coarse)で6近傍 geodesic 再構成し、細格子へ戻して AND する。
+    近接ブロブ(coarse以内)は肝臓の一部として温存、離れたブロブのみ落とす。"""
+    if int(mask.sum()) < 2:
+        return mask
+    small = _coarsen_any(mask, coarse)                 # 粗格子（数百分の1・数十反復で収束）
+    si = np.argwhere(small)
+    if len(si) < 2:
+        return mask
+    cen = si.mean(0)
+    seed = si[((si - cen) ** 2).sum(1).argmin()]       # 重心に最も近い粗セルを種に
+    marker = np.zeros_like(small); marker[tuple(seed)] = True
+    cur = 1
+    for _ in range(max_iter):
+        d = marker.copy()
+        d[1:] |= marker[:-1]; d[:-1] |= marker[1:]
+        d[:, 1:] |= marker[:, :-1]; d[:, :-1] |= marker[:, 1:]
+        d[:, :, 1:] |= marker[:, :, :-1]; d[:, :, :-1] |= marker[:, :, 1:]
+        d &= small
+        s = int(d.sum())
+        if s == cur:
+            break                                      # 収束＝種の連結成分が確定
+        cur = s; marker = d
+    keep = np.repeat(np.repeat(np.repeat(marker, coarse, 0), coarse, 1), coarse, 2)
+    keep = keep[:mask.shape[0], :mask.shape[1], :mask.shape[2]]
+    return mask & keep
+
+
+def ivc_centerline(mask, dz=1.0, min_vox=6, keep_mm=8.0):
+    """AI(TotalSegmentator)のIVCマスク(bool [nz,H,W])から、ICEの軸に使うパス点を作る。
+    各スライスの重心を z 昇順に並べ→最大連結成分だけ残し→z方向に軽く平滑化→~keep_mm ごとに間引く。
+    返り値: [[z, y, x], ...]（**index座標**＝self.path と同じ形式）。作れなければ []。
+    ※あくまで下書き。斜走・合流部・肝硬変ではブレるため、医師がドラッグで微調整/消去する前提。"""
+    m = np.asarray(mask).astype(bool)
+    if m.ndim != 3 or int(m.sum()) < 30:
+        return []
+    try:
+        m = largest_component(m)                       # 合流部の別枝や離れた誤検出を落とす
+    except Exception:
+        pass
+    pts = []
+    for z in range(m.shape[0]):
+        ys, xs = np.where(m[z])
+        if len(xs) >= min_vox:
+            pts.append([float(z), float(ys.mean()), float(xs.mean())])
+    if len(pts) < 2:
+        return []
+    pts = np.asarray(pts, float)
+    if len(pts) >= 5:                                  # 重心のガタつきを3点移動平均で均す（端点は保持）
+        for c in (1, 2):
+            s = pts[:, c].copy()
+            s[1:-1] = (pts[:-2, c] + pts[1:-1, c] + pts[2:, c]) / 3.0
+            pts[:, c] = s
+    keep = [0]                                         # ~keep_mm ごとに間引く（端点は必ず残す）
+    for i in range(1, len(pts)):
+        if (pts[i, 0] - pts[keep[-1], 0]) * dz >= keep_mm:
+            keep.append(i)
+    if keep[-1] != len(pts) - 1:
+        keep.append(len(pts) - 1)
+    return pts[keep].tolist()
+
+
 def _fill_inplane_holes(m, max_iter=200):
     """面内（軸位）で囲まれた穴を埋める＝肝内の縦走血管断面を充填。"""
     comp = ~m
@@ -112,6 +183,21 @@ def _surface_points(m, dsx, dsy, ddz, cap=20000, seed=0):
         idx = np.random.RandomState(seed).choice(len(pts), cap, replace=False)
         pts, nl = pts[idx], nl[idx]
     return pts.astype(np.float32), nl
+
+
+def smooth_points(m, dsx, dsy, ddz, cap=200000, seed=3):
+    """血管など細い構造のマスク → **滑らかな** mm 点群（法線は捨てて座標だけ）。
+
+    従来はボクセル中心をそのまま splat で描いていたので、輪郭が格子に量子化されて階段状に見えた
+    （解析の細かさを 1.5mm にするとさらに目立つ）。肝臓の面で使っている `_surface_points` と
+    同じ仕組み＝平滑化した占有率の 0.5 等値面まで点を押し出す処理をそのまま流用する。
+    点は「格子の中心」から「実際の面の上」へ動くだけなので、見た目が滑らかになるのと同時に
+    位置としてもむしろ正確になる（動く量は1ボクセル未満）。
+
+    細い血管は収縮で消えるため surf=全ボクセルとなり、点数は従来とほぼ同じ。
+    """
+    pts, _nl = _surface_points(m, dsx, dsy, ddz, cap=cap, seed=seed)
+    return pts
 
 
 def _interior_points(m, dsx, dsy, ddz, cap=28000, seed=1):
@@ -478,4 +564,32 @@ def render_ghost(liver, az_deg, el_deg, center, scale, w, h,
     alpha = np.clip(acc, 0, 1) * float(np.clip(opacity, 0, 1))
     out[..., 0] = color[0]; out[..., 1] = color[1]; out[..., 2] = color[2]
     out[..., 3] = (alpha * 255).astype(np.uint8)
+    return out
+
+
+def render_points(pts, az_deg, el_deg, center, scale, w, h, color,
+                  offset=(0.0, 0.0), rad=2, opacity=1.0):
+    """血管など点群を depth-shaded の色付き splat で (h,w,4) RGBA にして返す（Zバッファ後勝ち・手前が明るい）。
+    TotalSegmentator の IVC/門脈を Pane3D に重ねるのに使う。center/scale は他の描画と同じ値を渡す。"""
+    if pts is None or len(pts) == 0 or w < 4 or h < 4:
+        return None
+    u, v, depth = _project(pts, az_deg, el_deg, center, scale, w, h, offset)
+    dmin, dmax = float(depth.min()), float(depth.max())
+    rng = (dmax - dmin) + 1e-6
+    order = np.argsort(depth)                             # 遠い順→後勝ちで手前が上書き
+    uu, vv, dd = u[order], v[order], depth[order]
+    dn = (dd - dmin) / rng
+    col = np.array(color, np.float32)
+    out = np.zeros((h, w, 4), np.uint8); flat = out.reshape(-1, 4)
+    a8 = int(np.clip(opacity, 0, 1) * 255)
+    rad = max(0, int(rad))
+    for dy in range(-rad, rad + 1):
+        for dx in range(-rad, rad + 1):
+            if dx * dx + dy * dy > rad * rad + rad:       # 丸い粒
+                continue
+            U = uu + dx; V = vv + dy
+            ok = (U >= 0) & (U < w) & (V >= 0) & (V < h)
+            idx = V[ok] * w + U[ok]; sh = 0.45 + 0.55 * dn[ok]
+            rgb = (col[None, :] * sh[:, None]).astype(np.uint8)
+            flat[idx, 0] = rgb[:, 0]; flat[idx, 1] = rgb[:, 1]; flat[idx, 2] = rgb[:, 2]; flat[idx, 3] = a8
     return out

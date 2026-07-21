@@ -7,6 +7,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["TIPS_NO_SAMPLE"] = "1"                      # 起動時サンプル自動読込は抑止（テストは隔離カタログ）
+os.environ["TIPS_NO_TS"] = "1"                          # 起動時のTotalSegmentator自動実行も抑止（重い外部プロセス）
 import PySide6
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(
     os.path.dirname(PySide6.__file__), "Qt", "plugins", "platforms")
@@ -185,9 +186,10 @@ def run():
     win = main.MainWindow()
     import i18n
     i18n.set_lang("en"); win._apply_language()               # テストは保存済みUI言語に依らず英語で検証
-    # 上部メニュー（Help → FAQ / About）
+    # 上部メニュー（Help → FAQ / About / Donation）と寄付リンク定数
     help_actions = [a.text() for mu in win.menuBar().actions() for a in (mu.menu().actions() if mu.menu() else [])]
-    assert any("FAQ" in t for t in help_actions), help_actions
+    assert any("FAQ" in t for t in help_actions) and any("Donation" in t for t in help_actions), help_actions
+    assert main.SPONSORS_URL.startswith("https://")   # 寄付リンク定数（GitHub Sponsors承認待ちの間はBuy Me a Coffee）
     vol2 = dicom_io.load_series_files(st1["series"][0]["files"])   # 読込は同期で検証
     win._on_series_loaded(vol2)                                    # 開く→ビューア切替の経路
     assert win.stack.currentWidget() is win.viewer_page
@@ -262,6 +264,48 @@ def run():
     win.liverBtn.setChecked(False); win._toggle_liver(); assert win.p3d.show_liver is False
     win.liverBtn.setChecked(True); win._toggle_liver(); assert win.p3d.show_liver is True
     win._set_liver_opacity(70); assert abs(win.liver_opacity - 0.70) < 1e-6
+    # 血管AI（TS）: 合成の肝/IVC/門脈/肝血管ツリーを注入→3Dパネルボタンの生成後トグル・肝血管描画経路
+    win.p3d.ts_liver = _Ld
+    win.p3d.ts_ivc = np.array([[20, 30, 5], [21, 30, 6]], np.float32)
+    win.p3d.ts_portal = np.array([[22, 30, 5], [23, 31, 6]], np.float32)
+    win.p3d.ts_hepatic = np.array([[24, 30, 5], [25, 31, 7]], np.float32)   # 肝血管ツリー(肝静脈含む)
+    assert win.p3d._has_ts() is True
+    win.p3d.resize(320, 300); win.p3d.grab()                        # 肝血管ツリー(ローズ)まで描く経路
+    win.p3d.show_ts = True; win._update_vessel_btn()
+    assert win.p3d.vesselBtn.isChecked() is True                    # 表示中はボタンON
+    win._on_vessel_ai(); assert win.p3d.show_ts is False            # 生成済み→クリックで非表示トグル
+    win._on_vessel_ai(); assert win.p3d.show_ts is True             # もう一度で表示
+    # 回帰: ICE形状がある状態→set_geom(None)で apex/扇/オレンジ線/針が完全に消える
+    # （残ると AI解剖だけ表示する場面で中心ずれ・幽霊線・回転中心の狂いが出る）。
+    win.p3d.apex = np.array([300., 300., 50.]); win.p3d.orange = [np.array([1., 2., 3.]), np.array([4., 5., 6.])]
+    win.p3d.fan = np.zeros((5, 3)); win.p3d.needle_body = np.zeros((3, 3)); win.p3d.valid = True
+    win.p3d.set_geom(None)
+    assert win.p3d.valid is False
+    assert all(getattr(win.p3d, a) is None for a in
+               ("apex", "orange", "fan", "needle", "needle_body", "cannula_rod", "aim_tip",
+                "entry", "target", "shaft", "probe_outline"))
+    assert win.p3d._anat_center() is not None       # 幽霊apexが消え、以降は解剖の重心を中心に描く
+    win.p3d.resize(320, 300); win.p3d.grab()        # apex無し＋解剖ありの paint 経路（幽霊線なしで中央描画）
+    # 「画像が飛んだ」復旧: ペインをズーム＋Coronal断面を空気(端)へ→_reset_all_viewsで初期倍率＆Entryへ十字が戻る
+    from PySide6.QtCore import QPointF
+    win.cor.zoom = 0.2; win.cor.pan = QPointF(120, -80); win.cy = 0
+    _W = win.vol.array.shape[2]; win.entry = np.array([0.3 * _W * win.vol.sx, 0.5 * win.vol.array.shape[1] * win.vol.sy, 5 * win.vol.dz])
+    win._reset_all_views()
+    assert win.cor.zoom == 1.0 and win.cor.pan == QPointF(0, 0)     # ズーム/パンが初期化
+    assert win.cy == int(round(win.entry[1] / win.vol.sy))          # 断面がEntryの位置へ戻る（空気スライスから復帰）
+    # 手動肝静脈: 描画モードONで3断面クリック→点が溜まる・新しい血管・3DとCTの描画経路・保存/復元
+    win.hepBtn.setChecked(True); win._toggle_hep_mode(); assert win.hep_mode is True
+    win._axial_click(30, 40); win._ortho_click(1, 32, 20); win._ortho_click(2, 42, 22)
+    assert len(win.hep_veins[-1]) == 3                              # 3断面どれでも点が追加される
+    win._hep_new_vein(); win._axial_click(35, 45)
+    assert len([v for v in win.hep_veins if v]) == 2               # 2本目の血管
+    assert win.p3d._has_hep() is True and win.p3d._anat_center() is not None
+    for pane in (win.ax, win.cor, win.sag, win.p3d):
+        pane.resize(300, 280); pane.grab()                         # 手動肝静脈の描画経路（CT投影＋3D線）
+    _snap = win._capture_state()                                    # 保存→消去→復元の往復
+    win._clear_hep(); assert not [v for v in win.hep_veins if v]
+    win._restore_state(_snap)
+    assert len([v for v in win.hep_veins if v]) == 2 and win.hep_mode is False
     # 方位キューブ：index軸→LPS から解剖文字を割当（標準axial＝既定／反転行列でR/L・S/I入替）
     assert win.p3d._orient_letters() == {"+x": "L", "-x": "R", "+y": "P", "-y": "A", "+z": "S", "-z": "I"}
     win.p3d.orient = [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]            # 左右反転＋頭尾反転
@@ -301,7 +345,7 @@ def run():
     win._activate(win.cor)
     assert win.cor.active and not win.ax.active, "active frame must follow the hovered pane"
     main.GestureBar().grab()                                  # 凡例バー（拡大縮小/階調/移動 アイコン）描画
-    # 外部アプリ→本アプリ: URLスキームのパース（純粋関数）
+    # Mieleプラグイン→アプリ 橋渡し: URLスキームのパース（純粋関数）
     from PySide6.QtCore import QUrl
     _u = QUrl(f"{main.URL_SCHEME}://open?dir=/tmp/some%20study%20folder")
     assert main.path_from_open_event(_u, "") == "/tmp/some study folder", "URL scheme dir must url-decode"
@@ -317,7 +361,7 @@ def run():
     assert _got == ["/tmp/pending"], "buffered open events must flush on handler set"
     _disp.dispatch("/tmp/live")                               # 設定後は即配送
     assert _got == ["/tmp/pending", "/tmp/live"], "post-handler events dispatch immediately"
-    # 外部からの永久取り込み: 新規スタディを _import_external で取り込む（temp data_dir に隔離）
+    # Miele→アプリ 永久取り込み: 新規スタディを _import_external で取り込む（temp data_dir に隔離）
     _ho = os.path.join(tmp, "handoff2"); os.makedirs(_ho)
     _su = generate_uid(); _se = generate_uid()
     for z in range(5):                                        # 単一相(=1シリーズ)の新規スタディ
@@ -510,7 +554,19 @@ def run():
     assert not win.catalog.has_session(s1, 3), "database_view._on_restore_delete removes the saved session"
     btns1c = _restore_buttons(win.db, s1)
     assert not btns1c[3].isEnabled(), "restore button disabled after delete"
+    # --- v0.4.30: 起動時の寄付リマインド（monthly=出さない／once=1か月後に再度） ---
     import settings_store
+    from datetime import datetime, timedelta
+    _s = settings_store.store()                               # 設定はJSONストア（更新後も維持）
+    _s.remove("donation_status"); _s.remove("donation_last_ack")
+    assert win._donation_prompt_due() is True, "fresh install should prompt"
+    _s.setValue("donation_status", "monthly")
+    assert win._donation_prompt_due() is False, "monthly supporters are never prompted again"
+    _s.setValue("donation_status", "once"); _s.setValue("donation_last_ack", datetime.now().isoformat())
+    assert win._donation_prompt_due() is False, "one-time supporters aren't re-prompted immediately"
+    _s.setValue("donation_last_ack", (datetime.now() - timedelta(days=31)).isoformat())
+    assert win._donation_prompt_due() is True, "one-time supporters are re-prompted after 30 days"
+    _s.remove("donation_status"); _s.remove("donation_last_ack")
     # --- 挿入方向(既定)は施設固定の設定としてSettingsメニューに集約・永続化される ---
     win._set_insertion_default(False)
     assert settings_store.store().value("insertion_default") == "jugular" and win.tipHighZ is False
@@ -518,7 +574,7 @@ def run():
     win._set_insertion_default(True)
     assert settings_store.store().value("insertion_default") == "femoral" and win.tipHighZ is True
     # --- 設定の保存先(QStandardPaths.AppDataLocation)はQCoreApplication.applicationNameに依存し、
-    # 未設定だと実行環境によって保存先が変わり得る（更新のたびに設定が消える不具合の原因になった）。
+    # 未設定だと実行環境によって変わり得る（先生指摘：更新の度に寄付回答が消える不具合の原因）。
     # main()がこれを明示固定していることをソースから確認する（黙って削除されると実害が出るため回帰防止）。
     import inspect
     assert 'setApplicationName("TIPS ICE Planner")' in inspect.getsource(main.main), \
@@ -533,11 +589,21 @@ def run():
     file_menu = win.menuBar().actions()[0].menu()
     assert any(a.text() == "Patient list" for a in file_menu.actions())
     assert not hasattr(win, "langBtn"), "language button moved to Settings menu only"
+    assert win._qr_html(), "bundled Buy Me a Coffee QR code must resolve to an <img> tag"
+    # --- v0.4.32: フィードバック用Googleフォーム（日本語UI→日本語版／英語UI→英語版）---
+    from unittest.mock import patch as _patch
+    i18n.set_lang("ja"); win._apply_language()
+    with _patch.object(main.QDesktopServices, "openUrl") as m_open:
+        win._open_feedback_form()
+        assert m_open.call_args[0][0].toString() == main.FEEDBACK_FORM_JA, "ja UI opens the ja form"
+    i18n.set_lang("en"); win._apply_language()
+    with _patch.object(main.QDesktopServices, "openUrl") as m_open:
+        win._open_feedback_form()
+        assert m_open.call_args[0][0].toString() == main.FEEDBACK_FORM_EN, "en UI opens the en form"
     # --- v0.4.42: 閉じる時に状態保存を確認するダイアログ（Yes/No/Cancel） ---
     win.stack.setCurrentWidget(win.viewer_page)
     assert win.vol is not None and win.current_study_uid, "this point in the test must have a patient open"
     from PySide6.QtGui import QCloseEvent
-    from unittest.mock import patch as _patch
     with _patch.object(main.QMessageBox, "question", return_value=main.QMessageBox.Cancel) as m_q, \
          _patch.object(main.QMessageBox, "information") as m_i:
         ev = QCloseEvent(); win.closeEvent(ev)
@@ -586,6 +652,34 @@ def test_quit_while_worker_running_does_not_abort(qtbot=None):
     r = subprocess.run([sys.executable, "-c", prog], capture_output=True, timeout=60)
     assert r.returncode == 0, (
         f"quit-while-busy aborted (rc={r.returncode}; -6/134 = SIGABRT). "
+        f"stderr tail: {r.stderr.decode()[-300:]}")
+
+
+def test_exit_without_exec_while_worker_running_does_not_abort():
+    """app.exec() を通らない終了（テスト・ヘッドレススクリプト）では aboutToQuit も closeEvent も
+    呼ばれない。走行中の bg.Worker が Py_Finalize の PySide 終了処理で破棄されると
+    qFatal→abort() する（2026-07-14 に肝抽出 Worker 走行中のプロセス終了で実際に SIGABRT）。
+    bg 側の atexit がワーカー完了を待つことの回帰テスト（別プロセスで終了コードを見る）。"""
+    import subprocess, sys, os, textwrap
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    prog = textwrap.dedent(f"""
+        import os, sys, time
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        sys.path.insert(0, {app_dir!r})
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        import bg
+        def slow(progress):
+            t0 = time.time()
+            while time.time() - t0 < 2.0:
+                time.sleep(0.02)
+        w = bg.Worker(slow); w.start()
+        time.sleep(0.1)
+        # app.exec() せずそのまま終了 → bg の atexit がワーカーを待つ
+    """)
+    r = subprocess.run([sys.executable, "-c", prog], capture_output=True, timeout=60)
+    assert r.returncode == 0, (
+        f"exit-without-exec aborted (rc={r.returncode}; -6/134 = SIGABRT). "
         f"stderr tail: {r.stderr.decode()[-300:]}")
 
 
@@ -980,12 +1074,16 @@ def test_three_point_lock_mode():
             app.processEvents()
         win.show_liver = False
 
-        # スイッチが ICE のモックの直下にあること（＝ハンドルと同じ入れ物の中、モックより下の行）
+        # スイッチは操作パネル(ctlStack)の *外・下* にあり、ICE でも経腹でも見えること
+        # （経腹モードで stack が別ページに切り替わっても隠れない＝先生報告の修正）。
         box = win.lock3Btn.parentWidget()
-        assert box is win.handleBox and win.handleCtl.parentWidget() is win.handleBox, \
-            "3点固定スイッチが ICE モックと同じ入れ物に入っていない"
-        assert win.handleBox.layout().indexOf(win.lock3Btn) > win.handleBox.layout().indexOf(win.handleCtl), \
-            "3点固定スイッチが ICE モックの下に置かれていない"
+        assert win.ctlStack.parentWidget() is box and box is not win.handleBox, \
+            "3点固定スイッチが操作パネル(stack)の外・同じ入れ物に無い＝経腹で隠れてしまう"
+        assert box.layout().indexOf(win.lock3Btn) > box.layout().indexOf(win.ctlStack), \
+            "3点固定スイッチが操作パネルの下に置かれていない"
+        win._set_viewmode("surface")                         # 経腹に切替→スイッチが隠れないこと
+        assert win.lock3Btn.parentWidget() is box, "経腹モードで3点固定スイッチが別ページに移った"
+        win._set_viewmode("ice")
 
         win.viewMode = "ice"; win._update_mode_ui()
         win.path = [[19.0, 246.0, 240.0], [40.0, 256.0, 245.0], [60.0, 264.0, 248.0], [76.0, 270.0, 250.0]]
@@ -1146,6 +1244,20 @@ def test_actual_tip_button_can_remove_the_needle():
         win._stop_workers()
 
 
+def test_bundled_sample_ai_masks():
+    """Patient_01 のAI 3D を同梱: 事前計算マスク(.npz)が sample_data にあり、4構造を持つこと
+    （TotalSegmentator 未導入の環境でも、開けば肝/IVC/門脈/肝血管が出るための素）。"""
+    import numpy as np
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    npz = os.path.join(root, "sample_data", "HCC048_portal_venous.ai.npz")
+    if not os.path.exists(npz):
+        return
+    data = np.load(npz)
+    for n in ("liver", "inferior_vena_cava", "portal_vein_and_splenic_vein", "liver_vessels"):
+        assert n in data.files and int(data[n].sum()) > 0, n
+    assert data["liver"].shape == (89, 512, 512)
+
+
 def test_bundled_sample_case_autoloads():
     """配布アプリに常に入れる公開サンプルCT(HCC048)：同梱DICOMを app_data へコピー＋カタログ登録し、
     冪等（再取込で重複しない）で、ATTRIBUTION(CC BY 4.0 出典表示)も一緒に置かれること。"""
@@ -1158,6 +1270,7 @@ def test_bundled_sample_case_autoloads():
     tmp = tempfile.mkdtemp(prefix="tips_sample_test_")
     data_dir = os.path.join(tmp, "appdata"); os.makedirs(data_dir)
     catmod.app_data_dir = lambda: (os.makedirs(os.path.join(data_dir, "thumbs"), exist_ok=True) or data_dir)
+    # 本物の45MBは使わず合成サンプルで同梱場所を模す
     sample_src = os.path.join(tmp, "sample_data", "HCC048_portal_venous"); os.makedirs(sample_src)
     su, se = generate_uid(), generate_uid()
     for z in range(4):
@@ -1166,16 +1279,16 @@ def test_bundled_sample_case_autoloads():
         f.write("TCIA HCC-TACE-Seg / HCC_048 — CC BY 4.0")
     win = M.MainWindow()
     try:
-        win._sample_src = lambda: sample_src
+        win._sample_src = lambda: sample_src                 # 同梱場所を合成フォルダに差し替え
         assert not win._sample_present(), "起動直後はまだ未登録"
         added = win._ensure_sample_work()
         assert added == 1, "サンプル1シリーズを取り込む"
         assert win._sample_present(), "取込後は present"
         dst = win._sample_dst()
-        assert os.path.isdir(dst) and glob.glob(os.path.join(dst, "*.dcm")), "app_data へコピー（安定パス）"
+        assert os.path.isdir(dst) and glob.glob(os.path.join(dst, "*.dcm")), "app_data へコピー（安定パス・更新をまたいで有効）"
         assert os.path.exists(os.path.join(os.path.dirname(dst), "ATTRIBUTION.md")), "CC BY 4.0 の出典表示も同梱"
         before = len(win.catalog.series)
-        win._ensure_sample_work()
+        win._ensure_sample_work()                            # 冪等
         assert len(win.catalog.series) == before, "再取込しても重複しない（uidでスキップ）"
         print("✅ bundled sample case autoloads (copy to app_data / idempotent / attribution)")
     finally:

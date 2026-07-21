@@ -62,7 +62,7 @@ class HandleControl(QWidget):
     def _frame(self):
         W, H = self.width(), self.height()
         sy = H / MH
-        sx = min(W / MW, sy * 2.6)
+        sx = min(W / MW, sy * 4.2)   # 横だけ広げる上限（3.4→4.2・先生指示 2026-07-18 第3版。縦=sy は不変）
         ox = (W - MW * sx) / 2.0; oy = (H - MH * sy) / 2.0
         return sx, sy, ox, oy
 
@@ -277,7 +277,7 @@ class SurfaceProbeControl(QWidget):
     def _frame(self):
         W, H = self.width(), self.height()
         sy = H / MH
-        sx = min(W / MW, sy * 2.6)
+        sx = min(W / MW, sy * 4.2)   # 横だけ広げる上限（3.4→4.2・先生指示 2026-07-18 第3版。縦=sy は不変）
         ox = (W - MW * sx) / 2.0; oy = (H - MH * sy) / 2.0
         return sx, sy, ox, oy
 

@@ -205,68 +205,6 @@ def test_liver():
     print("✅ liver estimate/render ok  (L=%.2f surf=%d)" % (L["liters"], len(L["surf"])))
 
 
-def test_body_surface_shell():
-    """体表シェル: ①CT寝台を拾わない ②撮影範囲の端（上下の切断面）を面として閉じる
-       ③点がボクセル格子に量子化されていない（サブボクセル）④法線が mm 空間で正しい向き。
-
-    ①②を落とすと 3D は「中が丸見えの筒＋宙に浮いた板」になり、③を落とすと腹壁に等高線状の
-    縞が出る。④は体表を掴んだときのプローブの向き（体内向き法線）に直接効く。
-    """
-    from tips_core import liver
-    nz, H, W = 30, 90, 90
-    sx = sy = 1.0; dz = 3.0                                  # 面内1mm / スライス3mm＝異方性
-    vol = np.full((nz, H, W), -1000.0, np.float32)           # 空気
-    zz, yy, xx = np.ogrid[:nz, :H, :W]
-    r = np.sqrt((yy - 40) ** 2 + (xx - 45) ** 2)             # z方向に一様な太い円柱＝体幹
-    vol[np.broadcast_to(r <= 28, vol.shape)] = 40.0
-    vol[:, 74:77, 20:70] = 60.0                              # 体幹から離れた薄い板＝CT寝台
-
-    b = liver.body_surface(vol, sx, sy, dz, ds=(1, 1, 1))
-    assert b is not None and len(b["surf"]) > 500
-    pts = b["surf"]
-
-    # ① 寝台(y≈75mm)の点を拾っていない。体幹の背側の縁は y=68mm までしか無い
-    assert int((pts[:, 1] > 71.0).sum()) == 0, "CT寝台が体表シェルに混入している"
-
-    # ② 撮影範囲の端が「面」として閉じている。円柱の外周(r=28mm)ではなく、切断面の **内側**
-    #    （r<20mm）に点が要る。外周リングだけなら筒のままで、3Dで中が丸見えになる
-    zmm = pts[:, 2]
-    rr = np.hypot(pts[:, 0] - 45.0, pts[:, 1] - 40.0)
-    for lab, sel in (("先頭", zmm < dz * 0.6), ("末尾", zmm > (nz - 1) * dz - dz * 0.6)):
-        assert int((sel & (rr < 20.0)).sum()) > 50, f"{lab}スライスの切断面が閉じていない（筒抜け）"
-
-    # ③ サブボクセル: 点が格子(1mm)にぴったり乗っていない＝深度が階段にならない
-    frac = np.abs(pts[:, 0] / sx - np.round(pts[:, 0] / sx))
-    assert float(frac.max()) > 0.05, "表面点がボクセル格子のまま＝深度が階段になり縞が出る"
-
-    # 描画: 内側に穴が空かないこと（点群のまま撒くと虫食いになる）
-    c = b["center"]; scale = 200.0 / (b["extent"] * 1.2)
-    rgba = liver.render_ghost(b, 0.0, -75.0, c, scale, 200, 200, mode="surface", opacity=0.97)
-    a = rgba[..., 3]
-    op = a > 200
-    lr = np.maximum.accumulate(op, 1) & np.maximum.accumulate(op[:, ::-1], 1)[:, ::-1]
-    ud = np.maximum.accumulate(op, 0) & np.maximum.accumulate(op[::-1], 0)[::-1]
-    holes = int(((a < 40) & lr & ud).sum())
-    assert op.sum() > 2000 and holes == 0, f"体表の面に穴がある ({holes}px)"
-
-    # ④ 法線は **mm 空間** の外向き単位ベクトル。異方性ボクセル(面内1mm/スライス3mm)で
-    #    index 空間の勾配のまま出すと z 成分が3倍に効き、斜めの面で向きが狂う。
-    #    体表を掴んだときのプローブの向き（体内向き法線）がこれなので、狂うと撮像面が傾く。
-    sph = np.full((nz, H, W), -1000.0, np.float32)
-    cz, cy, cx = 19.5, 42.0, 45.0                            # index / mm 中心 = (45,42,58.5)mm
-    dmm = np.sqrt(((zz - cz) * dz) ** 2 + ((yy - cy) * sy) ** 2 + ((xx - cx) * sx) ** 2)
-    sph[dmm <= 30.0] = 40.0                                  # 半径30mm の真球（mm空間で等方）
-    bs = liver.body_surface(sph, sx, sy, dz, ds=(1, 1, 1))
-    P, N = bs["surf"], bs["nrm"]
-    radial = P - np.array([cx * sx, cy * sy, cz * dz], np.float32)
-    radial /= np.linalg.norm(radial, axis=1, keepdims=True)
-    dot = np.einsum("ij,ij->i", N, radial)
-    assert float(np.median(dot)) > 0.97, \
-        f"球の法線が半径方向を向いていない (median={np.median(dot):.3f}) — 勾配を mm に直していない"
-    print("✅ body surface ok  (pts=%d spacing=%.1fmm 穴=0 法線dot=%.3f)"
-          % (len(pts), b["spacing"], float(np.median(dot))))
-
-
 def test_features():
     """新機能の核: aim_readout(方位/距離) / surface_geometry(凸扇) / snap_to_skin / ice_image r0後方互換。"""
     # --- aim_readout: 標準axial orient（恒等 index→LPS: +x=L,+y=背側,+z=頭側）---
@@ -313,6 +251,61 @@ def test_features():
     bvol = np.full((30, 64, 64), -1000.0, np.float32); bvol[:, 16:48, 16:48] = 50.0
     bs = _lv.body_surface(bvol, 1.0, 1.0, 1.0)
     assert bs is not None and bs["surf"].shape[1] == 3 and bs["extent"] > 0 and len(bs["nrm"]) == len(bs["surf"])
+    # render_points: 点群→色付きsplat RGBA（TotalSegmentator の IVC/門脈描画）
+    _pts = np.array([[10., 10, 5], [12, 11, 6], [30, 30, 10]], np.float32)
+    _rp = _lv.render_points(_pts, 0, -75, _pts.mean(0), 3.0, 80, 80, (80, 150, 235))
+    assert _rp is not None and _rp.shape == (80, 80, 4) and int(_rp[..., 3].max()) > 0
+    assert _lv.render_points(None, 0, 0, [0, 0, 0], 1.0, 80, 80, (1, 1, 1)) is None
+    # ts_seg.build_scene: 合成マスク → liver(packed) / ivc / portal 点群（純numpy・torch非依存）
+    import ts_seg
+    _lvm = np.zeros((20, 40, 40), bool); _lvm[5:15, 10:30, 10:30] = True
+    _ivc = np.zeros((20, 40, 40), bool); _ivc[:, 18:22, 18:22] = True
+    _por = np.zeros((20, 40, 40), bool); _por[8:12, 12:28, 15:17] = True
+    # largest_component: 主塊＋遠く離れた誤検出ブロブ → 主塊だけ残す（肝臓の浮きブロブ除去）
+    from tips_core import liver as _lvmod
+    _big = np.zeros((20, 40, 40), bool); _big[4:16, 8:32, 8:32] = True      # 主塊
+    _spk = _big.copy(); _spk[1:3, 1:4, 1:4] = True                          # 遠い孤立ブロブを追加
+    _kept = _lvmod.largest_component(_spk)
+    assert int(_kept.sum()) == int(_big.sum()) and not _kept[1:3, 1:4, 1:4].any()  # 孤立ブロブは除去
+    _hep = np.zeros((20, 40, 40), bool); _hep[6:14, 11:29, 12:26] = True   # 肝血管ツリー(liver_vessels)
+    _scene = ts_seg.build_scene({"liver": _lvm, "inferior_vena_cava": _ivc,
+                                 "portal_vein_and_splenic_vein": _por,
+                                 "liver_vessels": _hep}, 1.0, 1.0, 1.0)
+    assert _scene is not None and "surf" in _scene["liver"] and "nrm" in _scene["liver"]
+    assert _scene["ivc"].shape[1] == 3 and _scene["portal"].shape[1] == 3
+    # 肝内血管ツリーは、分離成功なら肝静脈(ローズ)、失敗/OFFなら門脈系(青)に集約される
+    assert _scene["portal"].shape[1] == 3 and (_scene["hepatic"] is None or _scene["hepatic"].shape[1] == 3)
+    # split OFF は必ず門脈へ集約（ローズ肝静脈は出さない）＝門脈相で「門脈が青にならない」を防ぐ
+    _sc2 = ts_seg.build_scene({"liver": _lvm, "inferior_vena_cava": _ivc,
+                               "portal_vein_and_splenic_vein": _por, "liver_vessels": _hep},
+                              1.0, 1.0, 1.0, split_veins=False)
+    assert _sc2["hepatic"] is None and _sc2["portal"] is not None and _sc2["veins_split"] is False
+    assert ts_seg.build_scene({"liver": _lvm}, 1, 1, 1)["hepatic"] is None      # liver_vessels無ければ hepatic=None
+    assert ts_seg.build_scene(None, 1, 1, 1) is None                  # マスク無しは None（軽量フォールバック）
+    # ライセンス（肝血管ツリー用）: 一時ディレクトリで get/set/未設定 の往復
+    import tempfile
+    _old = os.environ.get("TOTALSEG_HOME_DIR")
+    with tempfile.TemporaryDirectory() as _td:
+        os.environ["TOTALSEG_HOME_DIR"] = _td
+        try:
+            assert ts_seg.get_license() == "" and ts_seg.license_set() is False   # 初期は未設定
+            assert ts_seg.set_license("aca_TESTKEY") is True
+            assert ts_seg.get_license() == "aca_TESTKEY" and ts_seg.license_set() is True
+            assert ts_seg.set_license("") is True and ts_seg.license_set() is False  # 空で解除
+        finally:
+            if _old is None:
+                os.environ.pop("TOTALSEG_HOME_DIR", None)
+            else:
+                os.environ["TOTALSEG_HOME_DIR"] = _old
+    assert isinstance(ts_seg.available(), bool)
+    assert isinstance(ts_seg._clean_env(), dict)                      # 凍結アプリの DYLD/PYTHON* を除いた環境
+    for _k in ("DYLD_LIBRARY_PATH", "PYTHONHOME", "PYTHONPATH"):
+        assert _k not in ts_seg._clean_env()
+    # 回帰: 外部venvが bundle 同梱ライブラリを掴まないよう SAFEPATH を必ず立てる（0.5.12で修正）
+    assert ts_seg._clean_env().get("PYTHONSAFEPATH") == "1"
+    _p3 = ts_seg._system_python3()                                    # venv作成用の素python（無ければNone）
+    assert _p3 is None or os.path.exists(_p3)
+    assert callable(ts_seg.install)
     # ice_coplanarity: 同一断面(面外~0) / 面外あり(best_offが現状より小)
     gp = dict(Tp=[0, 0, 0], Sp=[0, 0, 1.0], Vp=[1, 0, 0.0])
     ip = core.ice_coplanarity(gp, [3, 0, 2], [2, 0, -1])              # y=0 → 同一断面
@@ -575,6 +568,68 @@ if __name__ == "__main__":
     print("✅ tips_core smoke tests passed")
 
 
+def test_body_surface_shell():
+    """体表シェル: ①CT寝台を拾わない ②撮影範囲の端（上下の切断面）を面として閉じる
+       ③点がボクセル格子に量子化されていない（サブボクセル）④法線が mm 空間で正しい向き。
+
+    ①②を落とすと 3D は「中が丸見えの筒＋宙に浮いた板」になり、③を落とすと腹壁に等高線状の
+    縞が出る。④は体表を掴んだときのプローブの向き（体内向き法線）に直接効く。
+    """
+    from tips_core import liver
+    nz, H, W = 30, 90, 90
+    sx = sy = 1.0; dz = 3.0                                  # 面内1mm / スライス3mm＝異方性
+    vol = np.full((nz, H, W), -1000.0, np.float32)           # 空気
+    zz, yy, xx = np.ogrid[:nz, :H, :W]
+    r = np.sqrt((yy - 40) ** 2 + (xx - 45) ** 2)             # z方向に一様な太い円柱＝体幹
+    vol[np.broadcast_to(r <= 28, vol.shape)] = 40.0
+    vol[:, 74:77, 20:70] = 60.0                              # 体幹から離れた薄い板＝CT寝台
+
+    b = liver.body_surface(vol, sx, sy, dz, ds=(1, 1, 1))
+    assert b is not None and len(b["surf"]) > 500
+    pts = b["surf"]
+
+    # ① 寝台(y≈75mm)の点を拾っていない。体幹の背側の縁は y=68mm までしか無い
+    assert int((pts[:, 1] > 71.0).sum()) == 0, "CT寝台が体表シェルに混入している"
+
+    # ② 撮影範囲の端が「面」として閉じている。円柱の外周(r=28mm)ではなく、切断面の **内側**
+    #    （r<20mm）に点が要る。外周リングだけなら筒のままで、3Dで中が丸見えになる
+    zmm = pts[:, 2]
+    rr = np.hypot(pts[:, 0] - 45.0, pts[:, 1] - 40.0)
+    for lab, sel in (("先頭", zmm < dz * 0.6), ("末尾", zmm > (nz - 1) * dz - dz * 0.6)):
+        assert int((sel & (rr < 20.0)).sum()) > 50, f"{lab}スライスの切断面が閉じていない（筒抜け）"
+
+    # ③ サブボクセル: 点が格子(1mm)にぴったり乗っていない＝深度が階段にならない
+    frac = np.abs(pts[:, 0] / sx - np.round(pts[:, 0] / sx))
+    assert float(frac.max()) > 0.05, "表面点がボクセル格子のまま＝深度が階段になり縞が出る"
+
+    # 描画: 内側に穴が空かないこと（点群のまま撒くと虫食いになる）
+    c = b["center"]; scale = 200.0 / (b["extent"] * 1.2)
+    rgba = liver.render_ghost(b, 0.0, -75.0, c, scale, 200, 200, mode="surface", opacity=0.97)
+    a = rgba[..., 3]
+    op = a > 200
+    lr = np.maximum.accumulate(op, 1) & np.maximum.accumulate(op[:, ::-1], 1)[:, ::-1]
+    ud = np.maximum.accumulate(op, 0) & np.maximum.accumulate(op[::-1], 0)[::-1]
+    holes = int(((a < 40) & lr & ud).sum())
+    assert op.sum() > 2000 and holes == 0, f"体表の面に穴がある ({holes}px)"
+
+    # ④ 法線は **mm 空間** の外向き単位ベクトル。異方性ボクセル(面内1mm/スライス3mm)で
+    #    index 空間の勾配のまま出すと z 成分が3倍に効き、斜めの面で向きが狂う。
+    #    体表を掴んだときのプローブの向き（体内向き法線）がこれなので、狂うと撮像面が傾く。
+    sph = np.full((nz, H, W), -1000.0, np.float32)
+    cz, cy, cx = 19.5, 42.0, 45.0                            # index / mm 中心 = (45,42,58.5)mm
+    dmm = np.sqrt(((zz - cz) * dz) ** 2 + ((yy - cy) * sy) ** 2 + ((xx - cx) * sx) ** 2)
+    sph[dmm <= 30.0] = 40.0                                  # 半径30mm の真球（mm空間で等方）
+    bs = liver.body_surface(sph, sx, sy, dz, ds=(1, 1, 1))
+    P, N = bs["surf"], bs["nrm"]
+    radial = P - np.array([cx * sx, cy * sy, cz * dz], np.float32)
+    radial /= np.linalg.norm(radial, axis=1, keepdims=True)
+    dot = np.einsum("ij,ij->i", N, radial)
+    assert float(np.median(dot)) > 0.97, \
+        f"球の法線が半径方向を向いていない (median={np.median(dot):.3f}) — 勾配を mm に直していない"
+    print("✅ body surface ok  (pts=%d spacing=%.1fmm 穴=0 法線dot=%.3f)"
+          % (len(pts), b["spacing"], float(np.median(dot))))
+
+
 def test_ice_shaft_reaches_tips_length():
     """ICEカテーテルの近位シャフトは、クリックしたIVCパスの端で切れず、TIPSの外筒(90mm)並みに伸びること。
 
@@ -674,3 +729,21 @@ def test_solve_theta_3points():
     assert s3 is not None and abs(((s3["theta"] - s2["theta"] + 180) % 360) - 180) > 1.0
     print("✅ 3-point lock: θ0=%.0f° を %.1f° として復元（残差 %.3fmm）／解無し配置でも最良 %.2fmm"
           % (th0, s["theta"], s["resid"], s2["resid"]))
+
+
+def test_solve_surface_3points():
+    """経腹エコーの3点固定: 接触点(頂点)＋Entry＋Target が扇平面に乗るθを、現在のtilt/rockも考慮して解く。"""
+    from tips_core import geometry as G
+    import tips_core as core
+    # 回帰: アプリは core.（tips_core）経由で呼ぶ。__init__ の再エクスポート漏れを検出する
+    # （0.5.19で solve_surface_3points/catmull_rom が未登録＝経腹3点固定でクラッシュした）。
+    assert hasattr(core, "solve_surface_3points") and hasattr(core, "catmull_rom")
+    _cr = core.catmull_rom(np.array([[0, 0, 0], [10, 0, 0], [10, 10, 0], [20, 10, 0]], float))
+    assert len(_cr) > 4                                     # 折れ線→密な滑らか曲線
+    C = np.array([100., 100., 50.]); n0 = np.array([0., 1., 0.2]); pa = np.array([0., 0., 1.])
+    for th0, tilt, rock in ((137.0, 0, 0), (200.0, 12, -8), (61.0, -5, 15)):
+        g = G.surface_geometry(C, n0, th0, tilt, rock, 0.7, 0.7, 1.0, plane_axis=pa)
+        E = C + 40 * g["Vp"] + 15 * g["Sp"]; T = C + 90 * g["Vp"] - 25 * g["Sp"]   # 扇平面上の点
+        s = G.solve_surface_3points(C, n0, tilt, rock, E, T, pa, 0.7, 0.7, 1.0)
+        assert abs(((s["theta"] - th0 + 180) % 360) - 180) < 2.0 and s["resid"] < 0.5, (th0, s)
+    print("✅ surface 3-point lock: tilt/rock込みで θ を残差~0mm で復元")

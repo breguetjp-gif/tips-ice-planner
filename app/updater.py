@@ -100,7 +100,11 @@ def find_update(current_version, update_url=None, timeout=5):
             with urllib.request.urlopen(update_url, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
             zurl = (data.get("url") or "").strip()
-            if zurl:
+            if zurl and "/" in zurl:
+                # version.json の url は片方のOSのファイル名で固定されている（例: ...-Windows.zip）。
+                # Mac/Win の zip は同じ releases/latest/download/ に並ぶので、実行中OSの正しい
+                # ファイル名(DIST_ZIP)に差し替える＝Macが Windows.zip を掴む取り違えを防ぐ。
+                zurl = zurl.rsplit("/", 1)[0] + "/" + DIST_ZIP
                 consider(data.get("version", ""),
                          dict(version=str(data.get("version", "")).strip(), source="url",
                               notes=data.get("notes", ""), zip_url=zurl))

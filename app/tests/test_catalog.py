@@ -1076,10 +1076,27 @@ def test_three_point_lock_mode():
 
         # スイッチは操作パネル(ctlStack)の *外・下* にあり、ICE でも経腹でも見えること
         # （経腹モードで stack が別ページに切り替わっても隠れない＝先生報告の修正）。
+        # 2026-07-18 下部UI圧縮でどちらも入れ子レイアウト（ctlRow / lockRow）内に移動したため、
+        # 「同じ縦レイアウトの何行目か」を再帰で求めて上下関係を確認する（意図は従来と同じ）。
         box = win.lock3Btn.parentWidget()
         assert win.ctlStack.parentWidget() is box and box is not win.handleBox, \
             "3点固定スイッチが操作パネル(stack)の外・同じ入れ物に無い＝経腹で隠れてしまう"
-        assert box.layout().indexOf(win.lock3Btn) > box.layout().indexOf(win.ctlStack), \
+
+        def _row_of(vlayout, widget):
+            """縦レイアウトの何行目（直下 item）に widget が含まれるか。入れ子レイアウトも辿る。"""
+            def _contains(item, w):
+                if item.widget() is w:
+                    return True
+                lay = item.layout()
+                return bool(lay) and any(_contains(lay.itemAt(i), w) for i in range(lay.count()))
+            for r in range(vlayout.count()):
+                if _contains(vlayout.itemAt(r), widget):
+                    return r
+            return -1
+
+        r_stack = _row_of(box.layout(), win.ctlStack)
+        r_lock = _row_of(box.layout(), win.lock3Btn)
+        assert r_stack >= 0 and r_lock > r_stack, \
             "3点固定スイッチが操作パネルの下に置かれていない"
         win._set_viewmode("surface")                         # 経腹に切替→スイッチが隠れないこと
         assert win.lock3Btn.parentWidget() is box, "経腹モードで3点固定スイッチが別ページに移った"

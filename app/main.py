@@ -25,7 +25,7 @@ from i18n import L
 import settings_store
 from handle_control import HandleControl, SurfaceProbeControl
 
-VERSION = "0.5.55"                                            # 配布のたびに上げる（build_release.commandが反映）
+VERSION = "0.5.56"                                            # 配布のたびに上げる（build_release.commandが反映）
 UPDATE_URL = "https://raw.githubusercontent.com/breguetjp-gif/tips-ice-planner/main/version.json"  # 配布フォルダ version.json の共有リンク(直接取得)
 
 
@@ -991,12 +991,14 @@ class MainWindow(ShellWindow):   # 共通メソッドは shell.py（正本 engin
 
     def _check_updates(self, silent=False):
         """新版を探し、見つかればワンクリックで入れ替え・再起動する。
-        silent=True（起動時の自動チェック）はローカル配布フォルダのみ・最新時は無言。
-        silent=False（メニュー）はインターネット(UPDATE_URL)も見る・最新時も通知。"""
+        起動時(silent)もメニュー(手動)も、ローカル配布フォルダ＋インターネット(UPDATE_URL)の
+        両方を見る。公開版のユーザーはローカル配布フォルダを持たないので、起動時にネットを
+        見ないと自動更新が一度も走らなかった（2026-07-24 修正）。
+        silent=True（起動時）は最新時・確認不可時は無言、silent=False（メニュー）は最新時も通知。"""
         import updater
         updater.cleanup_stale_staging()              # 過去更新の .app.new/.app.old 残骸を掃除（2026-07-18）
         try:
-            info = updater.find_update(VERSION, None if silent else UPDATE_URL)
+            info = updater.find_update(VERSION, UPDATE_URL)
         except Exception as ex:
             if not silent:
                 QMessageBox.information(self, L("Check for updates", "アップデートの確認"),

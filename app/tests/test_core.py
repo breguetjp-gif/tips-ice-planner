@@ -367,6 +367,29 @@ def test_updater():
     print("✅ updater ok  (version compare / local detect / stage bundle)")
 
 
+def test_updater_internet_url_is_platform_correct():
+    """version.json の url が片OSのファイル名で固定でも、実行中OSの正しいzip名(DIST_ZIP)に
+    差し替える。公開版はローカル配布フォルダを持たないユーザーがネット経由で更新するため、
+    Mac が Windows.zip を掴む取り違え＝更新失敗を防ぐ回帰テスト（2026-07-24）。"""
+    import tempfile, json, updater
+    tmp = tempfile.mkdtemp(prefix="tips_upd_net_")
+    vj = os.path.join(tmp, "version.json")
+    json.dump({"version": "9.9.9", "notes": "net",       # url は常に Windows.zip 固定（実データと同じ）
+               "url": "https://example.com/releases/latest/download/TIPS-ICE-Planner-Windows.zip"},
+              open(vj, "w"))
+    _saved = updater.LOCAL_DIRS
+    try:
+        updater.LOCAL_DIRS = []                            # ローカルを無効化＝internetのみ評価
+        info = updater.find_update("0.4.5", update_url="file://" + vj)
+        assert info and info["source"] == "url" and info["version"] == "9.9.9", info
+        # 実行中OSの正しいzip名で終わる（Mac→...-Mac.zip / Win→...-Windows.zip）。片OS固定のままではない
+        assert os.path.basename(info["zip_url"]) == updater.DIST_ZIP, info["zip_url"]
+        assert info["zip_url"].startswith("https://example.com/releases/latest/download/"), info["zip_url"]
+    finally:
+        updater.LOCAL_DIRS = _saved
+    print("✅ updater internet url is platform-correct (%s)" % updater.DIST_ZIP)
+
+
 def test_updater_apply_and_relaunch():
     """自己更新の実置換（先生報告「OKを押してもバージョンが変わらない」の回帰防止）。
     旧: `set -e` + `[ -d "$TGT" ] && mv ...` が、条件を満たさないとログも残さず無言で
@@ -711,18 +734,25 @@ def test_solve_theta_3points():
     assert abs(max(oe, ot) - s["resid"]) < 1e-6
 
     # --- 解が存在しない配置でも「最良の θ」を返し、残差を正直に出すこと
+    # 2026-07-19 から評価は「面外距離＋扇はみ出し(sector_shortfall)」＝面に乗るだけでなく
+    # 絵の中に入ることも要求する。比較は同じ複合スコアで行う。
+    def score(th, E, T):
+        g = G.ice_geometry(path, zP, th, b1, b2, sx, sy, dz)
+        return max(off(th, E, T)) + G.sector_shortfall(g, E) + G.sector_shortfall(g, T)
+
     E2 = np.array([252.0, 176.0, 168.0]); T2 = np.array([214.0, 190.0, 128.0])
     s2 = G.solve_theta_3points(path, zP, b1, b2, sx, sy, dz, E2, T2)
-    brute = min(max(off(t, E2, T2)) for t in np.arange(0.0, 360.0, 1.0))
-    assert s2["resid"] <= brute + 1e-6, f"もっと良い θ がある (解 {s2['resid']:.2f} > 総当たり {brute:.2f})"
+    sc2 = score(s2["theta"], E2, T2)
+    brute = min(score(t, E2, T2) for t in np.arange(0.0, 360.0, 1.0))
+    assert sc2 <= brute + 1e-6, f"もっと良い θ がある (解 {sc2:.2f} > 総当たり {brute:.2f})"
     assert s2["resid"] > 1.0, "前提が崩れた: この配置は θ だけでは合わないはず"
     oe2, ot2 = off(s2["theta"], E2, T2)
     assert abs(max(oe2, ot2) - s2["resid"]) < 1e-6, "残差の報告が実測と食い違う"
 
-    # 近似版(ice_coplanarity)に負けないこと（＝真の幾何で解き直す意味がある）
+    # 近似版(ice_coplanarity)に負けないこと（＝真の幾何で解き直す意味がある・同じ複合スコアで比較）
     ga = G.ice_geometry(path, zP, 193.0, b1, b2, sx, sy, dz)
     ap = G.ice_coplanarity(ga, E2, T2)
-    assert s2["resid"] <= max(off(ap["best_theta"], E2, T2)) + 1e-6, "近似版に負けている"
+    assert sc2 <= score(ap["best_theta"], E2, T2) + 1e-6, "近似版に負けている"
 
     # 押し引きを変えれば別の θ が解になる（θ が従属変数として追従する）
     s3 = G.solve_theta_3points(path, 62.0, b1, b2, sx, sy, dz, E2, T2)
